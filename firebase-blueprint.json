@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "audit_logs": {
+      "title": "Audit Log",
+      "description": "Immutable security and activity audit records tracking database writes and user actions",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "bsgId": { "type": "string" },
+        "role": { "type": "string" },
+        "action": { "type": "string" },
+        "module": { "type": "string" },
+        "stateId": { "type": "string" },
+        "districtId": { "type": "string" },
+        "districtName": { "type": "string" },
+        "targetEntity": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "ipAddress": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["action", "module", "timestamp"]
+    },
+    "districts": {
+      "title": "District",
+      "description": "District division records in Eastern Railway",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "state_id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "bsg_id": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name", "code", "bsg_id"]
+    },
+    "member_counts": {
+      "title": "Member Counts",
+      "description": "District census membership numbers by category and academic year",
+      "type": "object",
+      "properties": {
+        "district_id": { "type": "string" },
+        "year_id": { "type": "string" },
+        "bunnies": { "type": "number" },
+        "bunny_aunties": { "type": "number" },
+        "bulbul": { "type": "number" },
+        "guide": { "type": "number" },
+        "ranger": { "type": "number" },
+        "scout": { "type": "number" },
+        "rover": { "type": "number" },
+        "cub": { "type": "number" },
+        "flock_leaders": { "type": "number" },
+        "guide_captains": { "type": "number" },
+        "ranger_leaders": { "type": "number" },
+        "cub_masters": { "type": "number" },
+        "lady_cub_masters": { "type": "number" },
+        "professional_guides": { "type": "number" },
+        "voluntary_commissioners": { "type": "number" },
+        "support_staff": { "type": "number" },
+        "professionals_staff": { "type": "number" },
+        "youth_total": { "type": "number" },
+        "unit_leaders_total": { "type": "number" },
+        "professionals_total": { "type": "number" },
+        "grand_total": { "type": "number" },
+        "updated_by": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["district_id", "year_id", "grand_total"]
+    },
+    "official_contacts": {
+      "title": "Official Contact Person / Authorized Representative",
+      "description": "Authorized district representatives with railway designation, scouting rank, and BSG ID",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "state_id": { "type": "string" },
+        "district_id": { "type": "string" },
+        "year_id": { "type": "string" },
+        "name": { "type": "string" },
+        "railway_designation": { "type": "string" },
+        "scouting_rank": { "type": "string" },
+        "bsg_id": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "is_selected": { "type": "number" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "district_id", "name"]
+    }
+  },
+  "firestore": {
+    "/audit_logs/{logId}": {
+      "schema": "audit_logs",
+      "description": "System audit logs recording write events and security actions"
+    },
+    "/districts/{districtId}": {
+      "schema": "districts",
+      "description": "Eastern Railway Scout and Guide districts"
+    },
+    "/member_counts/{memberId}": {
+      "schema": "member_counts",
+      "description": "Census and registered member counts per district and year"
+    },
+    "/official_contacts/{contactId}": {
+      "schema": "official_contacts",
+      "description": "Authorized Representatives for Scout & Guide districts"
+    }
+  }
+}

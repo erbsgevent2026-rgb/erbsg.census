@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   ERBSG Portal Professional Animation System
+   ========================================================================== */
+
+/* Subtle ambient background gradient motion */
+@keyframes bg-ambient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.login-animated-bg {
+  background-size: 160% 160%;
+  animation: bg-ambient-shift 24s ease infinite;
+}
+
+/* Ambient glow orb drifting */
+@keyframes ambient-orb-1 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translate(35px, -25px) scale(1.08);
+    opacity: 0.35;
+  }
+}
+
+@keyframes ambient-orb-2 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.2;
+  }
+  50% {
+    transform: translate(-30px, 30px) scale(1.06);
+    opacity: 0.3;
+  }
+}
+
+.animate-ambient-orb-1 {
+  animation: ambient-orb-1 14s ease-in-out infinite;
+}
+
+.animate-ambient-orb-2 {
+  animation: ambient-orb-2 16s ease-in-out infinite;
+}
+
+/* Smooth page-load entrance for the login container */
+@keyframes login-container-in {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-login-card-entrance {
+  animation: login-container-in 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Subtle staggered fade + slide up for header and form elements */
+@keyframes fade-slide-up-item {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger-logo {
+  animation: fade-slide-up-item 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
+}
+
+.animate-stagger-heading {
+  animation: fade-slide-up-item 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both;
+}
+
+.animate-stagger-subheading {
+  animation: fade-slide-up-item 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.24s both;
+}
+
+.animate-stagger-form {
+  animation: fade-slide-up-item 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.32s both;
+}
+
+.animate-stagger-button {
+  animation: fade-slide-up-item 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both;
+}
+
+/* Subtle logo float/pulse without rotation or distortion */
+@keyframes logo-subtle-float {
+  0%, 100% {
+    transform: translateY(0);
+    filter: drop-shadow(0 8px 12px rgba(2, 6, 23, 0.5));
+  }
+  50% {
+    transform: translateY(-3.5px);
+    filter: drop-shadow(0 12px 18px rgba(37, 99, 235, 0.28));
+  }
+}
+
+.animate-logo-gentle-float {
+  animation: logo-subtle-float 4.2s ease-in-out infinite;
+}
+
+/* Subtle error shake for failed credentials */
+@keyframes subtle-login-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  20%, 60% {
+    transform: translateX(-6px);
+  }
+  40%, 80% {
+    transform: translateX(6px);
+  }
+}
+
+.animate-subtle-shake {
+  animation: subtle-login-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* Smooth transitions for inputs, buttons, and icons */
+.login-input-transition {
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.login-input-transition:focus {
+  transform: translateY(-1px);
+}
+
+.login-btn-transition {
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.login-btn-transition:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: 0 10px 22px -3px rgba(251, 191, 36, 0.4);
+}
+
+.login-btn-transition:active:not(:disabled) {
+  transform: translateY(0.5px);
+  box-shadow: 0 4px 10px -2px rgba(251, 191, 36, 0.25);
+}
+
+/* Respect prefers-reduced-motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .animate-login-card-entrance,
+  .animate-stagger-logo,
+  .animate-stagger-heading,
+  .animate-stagger-subheading,
+  .animate-stagger-form,
+  .animate-stagger-button,
+  .animate-logo-gentle-float,
+  .animate-subtle-shake,
+  .animate-ambient-orb-1,
+  .animate-ambient-orb-2,
+  .login-animated-bg {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}

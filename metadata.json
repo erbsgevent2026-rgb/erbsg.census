@@ -1,0 +1,6 @@
+{
+  "name": "ERBSG Data Control Portal",
+  "description": "Official organizational data management portal for Eastern Railway Bharat Scouts and Guides (ERBSG)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
