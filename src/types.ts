@@ -1,23 +1,24 @@
 export type UserRole = "STATE_ADMIN" | "DISTRICT_USER";
 
 export const FIXED_OFFICIAL_POSITIONS = [
-  "President",
-  "District Chief Commissioner",
-  "District Secretary",
-  "District Commissioner (S)",
-  "District Commissioner (G)",
-  "District Organising Commissioner (Scouts)",
-  "District Organising Commissioner (Guides)",
-  "District Training Commissioner of Scouts",
-  "District Training Commissioner of Guides",
-  "District Youth Committee Chairman",
-  "District Media Co-ordinator",
-  "Jt. District Secretary",
-  "Asstt. District Secretary",
-  "District Treasurer",
-  "Nodal Officer of Aapdamitra",
-  "Co-chairman of Youth Committee",
-  "Growth Coordinator"
+  "1. President",
+  "2. District Chief Commissioner",
+  "3. District Commissioners (S)",
+  "4. District Commissioner (G)",
+  "5. District Secretary",
+  "6. Jt. District Secretary",
+  "7. Asstt. District Secretary",
+  "8. District Treasurer",
+  "9. District Organising Commissioner (Scouts)",
+  "10. District Organising Commissioner (Guides)",
+  "11. District Training Commissioner (Scouts)",
+  "12. District Training Commissioner (Guides)",
+  "13. Chairman District Youth Committee",
+  "14. Co-chairman District Youth Committee",
+  "15. District Media Co-ordinator",
+  "16. Nodal Officer of Aapdamitra",
+  "17. Growth Coordinator",
+  "18. District OYMS Co-ordinator"
 ] as const;
 
 export type OfficialPositionName = (typeof FIXED_OFFICIAL_POSITIONS)[number];

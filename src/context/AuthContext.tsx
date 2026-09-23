@@ -67,7 +67,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshDistricts = useCallback(async () => {
     try {
       const list = await api.getDistricts();
-      const sorted = Array.isArray(list) ? [...list].sort((a, b) => a.name.localeCompare(b.name)) : [];
+      const uniqueDistricts = Array.isArray(list)
+        ? Array.from(new Map(list.map((d) => [d.id, d])).values())
+        : [];
+      const sorted = [...uniqueDistricts].sort((a, b) => a.name.localeCompare(b.name));
       setDistricts(sorted);
       // Synchronize districts into Firestore in background
       if (sorted.length > 0) {
@@ -81,7 +84,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const firestoreList = await getDistrictsFromFirestore();
         if (firestoreList && firestoreList.length > 0) {
-          const sorted = [...firestoreList].sort((a, b) => a.name.localeCompare(b.name));
+          const unique = Array.from(new Map(firestoreList.map((d) => [d.id, d])).values());
+          const sorted = [...unique].sort((a, b) => a.name.localeCompare(b.name));
           setDistricts(sorted);
           if (!user?.districtId) {
             setActiveDistrictId(sorted[0].id);

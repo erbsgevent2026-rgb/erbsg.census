@@ -1,9 +1,11 @@
 import React from "react";
 import { useAuth } from "../context/AuthContext";
+import { useHealthCheck } from "../hooks/useHealthCheck";
 import {
   LayoutDashboard,
   Building2,
   FileText,
+  FileSpreadsheet,
   FileCheck,
   PhoneCall,
   UserCheck,
@@ -30,12 +32,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const { user, logout } = useAuth();
+  const { status: healthStatus } = useHealthCheck();
   const isStateAdmin = user?.role === "STATE_ADMIN";
 
   const primaryNavItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "basic-details", label: "Basic Details", icon: Building2 },
     { id: "annual-reports", label: "Annual Report", icon: FileText },
+    { id: "census-reports", label: "Census Report", icon: FileSpreadsheet },
     { id: "audited-statements", label: "Audited Statement", icon: FileCheck },
     { id: "official-contacts", label: "Official Contact Person", icon: PhoneCall },
     { id: "members", label: "Members", icon: UserCheck },
@@ -142,6 +146,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Server Health Status Indicator */}
+      <div className="px-4 py-2 border-t border-slate-800 bg-slate-950/40 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            {healthStatus === "connected" && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                healthStatus === "connected"
+                  ? "bg-emerald-500"
+                  : healthStatus === "connecting"
+                  ? "bg-amber-500"
+                  : "bg-red-500"
+              }`}
+            ></span>
+          </span>
+          <span className="text-[11px] font-medium text-slate-300">
+            {healthStatus === "connected"
+              ? "Server Connected"
+              : healthStatus === "connecting"
+              ? "Checking Server..."
+              : "Server Disconnected"}
+          </span>
+        </div>
+        <span
+          className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+            healthStatus === "connected"
+              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+              : healthStatus === "connecting"
+              ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+              : "bg-red-500/10 text-red-400 border border-red-500/20"
+          }`}
+        >
+          {healthStatus === "connected" ? "Active" : healthStatus === "connecting" ? "Sync" : "Offline"}
+        </span>
       </div>
 
       {/* User Section / Footer */}

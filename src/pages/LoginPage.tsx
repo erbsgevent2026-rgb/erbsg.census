@@ -45,6 +45,7 @@ export const LoginPage: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+  const [forgotMessage, setForgotMessage] = useState<string | null>(null);
 
   // Check URL query parameters for reset_token on load
   useEffect(() => {
@@ -112,6 +113,7 @@ export const LoginPage: React.FC = () => {
     setResetLink(null);
     setResetToken(null);
     setSentEmail(null);
+    setForgotMessage(null);
     setNewPassword("");
     setConfirmPassword("");
   };
@@ -126,6 +128,7 @@ export const LoginPage: React.FC = () => {
       setSentEmail(res.email || forgotIdent);
       setResetLink(res.resetLink || null);
       setResetToken(res.token || null);
+      setForgotMessage(res.message || null);
       setForgotStep("SENT");
     } catch (err: any) {
       setForgotError(err.message || "Failed to generate password reset link. Please check your BSG ID or registered email.");
@@ -441,7 +444,7 @@ export const LoginPage: React.FC = () => {
               </>
             )}
 
-            {/* STEP 2: LINK DISPATCHED */}
+            {/* STEP 2: LINK DISPATCHED OR CREDENTIALS DELIVERED */}
             {forgotStep === "SENT" && (
               <div className="space-y-4">
                 <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl">
@@ -449,14 +452,22 @@ export const LoginPage: React.FC = () => {
                     <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                     <div>
                       <h4 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
-                        Password Reset Link Dispatched
+                        {resetLink ? "Password Reset Link Dispatched" : "Temporary Credentials Delivered"}
                       </h4>
                       <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-1">
-                        A secure password reset link has been dispatched to your registered address:
+                        {forgotMessage ||
+                          (resetLink
+                            ? "A secure password reset link has been dispatched to your registered address:"
+                            : "Your temporary login credentials have been securely delivered to your official address:")}
                       </p>
-                      <p className="text-xs font-bold text-slate-900 dark:text-white mt-1.5 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800 inline-block">
+                      <p className="text-xs font-bold text-slate-900 dark:text-white mt-1.5 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800 inline-block font-mono">
                         {sentEmail}
                       </p>
+                      {!resetLink && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
+                          Upon signing in with the temporary password, you will be required to set a new secure password.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -496,14 +507,28 @@ export const LoginPage: React.FC = () => {
                 )}
 
                 <div className="flex flex-col gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setForgotStep("RESET")}
-                    className="w-full py-2.5 px-4 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Proceed to Reset Password Now</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  {resetLink ? (
+                    <button
+                      type="button"
+                      onClick={() => setForgotStep("RESET")}
+                      className="w-full py-2.5 px-4 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Proceed to Reset Password Now</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotModalOpen(false);
+                        setPassword("");
+                      }}
+                      className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Proceed to Sign In</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setForgotModalOpen(false)}

@@ -45,15 +45,36 @@ export const OfficialContactsView: React.FC = () => {
       setLoading(true);
       const data = await api.getOfficialContacts(targetDistrictId, selectedYear);
       
-      // Ensure all 17 fixed positions are always initialized in exact order
+      // Ensure all 18 fixed positions are always initialized in exact order with serial numbers 1–18
+      const normalize = (s: string) =>
+        (s || "")
+          .replace(/^\d+\.\s*/, "")
+          .toLowerCase()
+          .replace(/[\(\)\.\-_]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+
       const fullList: OfficialContact[] = FIXED_OFFICIAL_POSITIONS.map((posName, idx) => {
         const posOrder = idx + 1;
-        const existing = data.find(
-          (c) =>
-            c.position_order === posOrder ||
-            c.position_name?.trim().toLowerCase() === posName.trim().toLowerCase() ||
-            c.scouting_rank?.trim().toLowerCase() === posName.trim().toLowerCase()
-        );
+        const baseName = normalize(posName);
+        const existing = data.find((c) => {
+          const cName = normalize(c.position_name || "");
+          const cRank = normalize(c.scouting_rank || c.designation || "");
+
+          if (c.position_order === posOrder && cName === baseName) return true;
+          if (cName && cName === baseName) return true;
+
+          // Special alias matching for renames
+          if (baseName === "chairman district youth committee" && (cName.includes("youth committee chairman") || cRank.includes("youth committee chairman"))) return true;
+          if (baseName === "co chairman district youth committee" && (cName.includes("co chairman") || cRank.includes("co chairman"))) return true;
+          if (baseName === "district commissioners s" && (cName.includes("commissioner s") || cName.includes("commissioner scout") || cRank.includes("commissioner s") || cRank.includes("commissioner scout"))) return true;
+          if (baseName === "district commissioner g" && (cName.includes("commissioner g") || cName.includes("commissioner guide") || cRank.includes("commissioner g") || cRank.includes("commissioner guide"))) return true;
+          if (baseName === "district training commissioner scouts" && (cName.includes("training commissioner of scouts") || cName.includes("training commissioner scouts"))) return true;
+          if (baseName === "district training commissioner guides" && (cName.includes("training commissioner of guides") || cName.includes("training commissioner guides"))) return true;
+          if (baseName === "district oyms co ordinator" && cName.includes("oyms")) return true;
+
+          return false;
+        }) || data.find((c) => c.position_order === posOrder);
 
         return {
           id: existing?.id || `oc_${targetDistrictId}_${selectedYear}_pos_${posOrder}`,
@@ -158,7 +179,7 @@ export const OfficialContactsView: React.FC = () => {
             <span>Official Contact Person</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            17 Fixed Statutory Official Positions for Eastern Railway Bharat Scouts and Guides
+            18 Fixed Statutory Official Positions for Eastern Railway Bharat Scouts and Guides
           </p>
         </div>
 
@@ -210,17 +231,17 @@ export const OfficialContactsView: React.FC = () => {
         </div>
       )}
 
-      {/* 17 Fixed Positions Container */}
+      {/* 18 Fixed Positions Container */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Header bar */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/70 dark:bg-slate-950/50">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold uppercase text-slate-800 dark:text-slate-200 tracking-wider flex items-center gap-1.5">
               <Shield className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              Official Positions (17)
+              Official Positions (18)
             </span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-              {configuredCount}/17 Configured
+              {configuredCount}/18 Configured
             </span>
             {isStateAdmin ? (
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
@@ -235,8 +256,8 @@ export const OfficialContactsView: React.FC = () => {
 
           <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
             {isStateAdmin
-              ? `Viewing the 17 statutory official positions for ${districtName}.`
-              : `Update contact details for the 17 positions of ${districtName}. Fixed list — no positions can be added or deleted.`}
+              ? `Viewing the 18 statutory official positions for ${districtName}.`
+              : `Update contact details for the 18 positions of ${districtName}. Fixed list — no positions can be added or deleted.`}
           </span>
         </div>
 
@@ -245,7 +266,7 @@ export const OfficialContactsView: React.FC = () => {
           {loading ? (
             <div className="p-16 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2.5">
               <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-              <span className="font-semibold text-slate-700 dark:text-slate-300">Loading 17 Official Positions...</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Loading 18 Official Positions...</span>
             </div>
           ) : (
             contacts.map((c, index) => {
@@ -408,7 +429,7 @@ export const OfficialContactsView: React.FC = () => {
         {!isStateAdmin && (
           <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              All changes to the 17 official positions are isolated to {districtName} and securely saved in the ERBSG central records.
+              All changes to the 18 official positions are isolated to {districtName} and securely saved in the ERBSG central records.
             </span>
 
             <button

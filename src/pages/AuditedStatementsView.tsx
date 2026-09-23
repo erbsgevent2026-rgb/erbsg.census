@@ -4,7 +4,8 @@ import { api } from "../services/api";
 import { StatutoryDocument } from "../types";
 import { exportToExcel } from "../utils/excelExport";
 import { PdfViewerModal } from "../components/PdfViewerModal";
-import { printStatutoryDocument, printStatutorySummaryTable } from "../utils/printDocument";
+import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
+import { printStatutoryDocument, printStatutorySummaryTable, printPdfData } from "../utils/printDocument";
 import {
   FileCheck,
   Upload,
@@ -40,6 +41,10 @@ export const AuditedStatementsView: React.FC = () => {
   // PDF Viewer Modal State
   const [activePdfDoc, setActivePdfDoc] = useState<StatutoryDocument | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+
+  // Delete Modal State
+  const [documentToDelete, setDocumentToDelete] = useState<StatutoryDocument | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchStatements = async () => {
     try {
@@ -138,24 +143,49 @@ export const AuditedStatementsView: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete Audited Statement: ${name}?`)) return;
+  const handleConfirmDelete = async () => {
+    if (!documentToDelete) return;
     try {
-      await api.deleteAuditedStatement(id);
-      setStatusMessage({ type: "success", text: "Audited statement deleted successfully." });
-      await fetchStatements();
+      setDeleting(true);
+      await api.deleteAuditedStatement(documentToDelete.id);
+      // Immediately remove from table state
+      setStatements((prev) => prev.filter((s) => s.id !== documentToDelete.id));
+      setStatusMessage({ type: "success", text: `Audited Statement "${documentToDelete.file_name}" deleted successfully.` });
+      setDocumentToDelete(null);
     } catch (err: any) {
       setStatusMessage({ type: "error", text: err.message || "Failed to delete statement." });
+    } finally {
+      setDeleting(false);
     }
   };
 
   const handleViewPdf = async (stmt: StatutoryDocument) => {
     try {
-      const fullDoc = await api.getAuditedStatementFile(stmt.id);
+      let fullDoc = stmt;
+      if (!stmt.file_data) {
+        fullDoc = await api.getAuditedStatementFile(stmt.id);
+      }
       setActivePdfDoc(fullDoc);
       setPdfModalOpen(true);
     } catch {
-      alert("Failed to load PDF preview.");
+      setStatusMessage({ type: "error", text: "Failed to load PDF preview." });
+    }
+  };
+
+  const handlePrintPdf = async (stmt: StatutoryDocument) => {
+    try {
+      let fileData = stmt.file_data;
+      if (!fileData) {
+        const full = await api.getAuditedStatementFile(stmt.id);
+        fileData = full.file_data;
+      }
+      if (!fileData) {
+        setStatusMessage({ type: "error", text: "PDF document data is unavailable for printing." });
+        return;
+      }
+      printPdfData(fileData, stmt.file_name);
+    } catch {
+      setStatusMessage({ type: "error", text: "Failed to prepare PDF document for printing." });
     }
   };
 
@@ -394,25 +424,25 @@ export const AuditedStatementsView: React.FC = () => {
                         <td className="px-3 py-2.5 text-center">
                           <button
                             onClick={() => handleViewPdf(stmt)}
-                            className="p-1.5 bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-100 rounded-md transition"
-                            title="View Statement"
+                            className="p-1.5 bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-100 rounded-md transition cursor-pointer"
+                            title="View Exact PDF"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           <button
-                            onClick={() => printStatutoryDocument(stmt, "Audited Statement", yearObj?.label || stmt.year_id)}
-                            className="p-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/60 rounded-md transition"
-                            title="Print / Generate PDF"
+                            onClick={() => handlePrintPdf(stmt)}
+                            className="p-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/60 rounded-md transition cursor-pointer"
+                            title="Print Exact PDF"
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           <button
-                            onClick={() => handleDelete(stmt.id, stmt.file_name)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition"
+                            onClick={() => setDocumentToDelete(stmt)}
+                            className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition cursor-pointer"
                             title="Delete Statement"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -437,6 +467,19 @@ export const AuditedStatementsView: React.FC = () => {
           fileData={activePdfDoc.file_data}
           uploadedBy={activePdfDoc.uploaded_by}
           uploadedAt={activePdfDoc.uploaded_at}
+        />
+      )}
+
+      {/* In-App Delete Confirmation Modal */}
+      {documentToDelete && (
+        <DeleteConfirmationModal
+          isOpen={!!documentToDelete}
+          onClose={() => setDocumentToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          title="Delete Audited Statement"
+          fileName={documentToDelete.file_name}
+          itemType="Audited Statement"
+          loading={deleting}
         />
       )}
     </div>

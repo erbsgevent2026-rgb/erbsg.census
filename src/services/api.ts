@@ -146,6 +146,18 @@ export const api = {
   deleteAnnualReport: (id: string) => request<{ message: string }>(`/annual-reports/${id}`, { method: "DELETE" }),
   getAnnualReportFile: (id: string) => request<StatutoryDocument>(`/annual-reports/${id}`),
 
+  // Census Reports
+  getCensusReports: (yearId?: string, districtId?: string) => {
+    const params = new URLSearchParams();
+    if (yearId) params.append("year_id", yearId);
+    if (districtId) params.append("district_id", districtId);
+    return request<StatutoryDocument[]>(`/census-reports?${params.toString()}`);
+  },
+  uploadCensusReport: (payload: { district_id: string; year_id: string; file_name: string; file_size: number; file_data: string }) =>
+    request<{ message: string; id: string; version: number }>("/census-reports", { method: "POST", body: JSON.stringify(payload) }),
+  deleteCensusReport: (id: string) => request<{ message: string }>(`/census-reports/${id}`, { method: "DELETE" }),
+  getCensusReportFile: (id: string) => request<StatutoryDocument>(`/census-reports/${id}`),
+
   // Audited Statements
   getAuditedStatements: (yearId?: string, districtId?: string) => {
     const params = new URLSearchParams();

@@ -7,6 +7,7 @@ import { ChangePasswordModal } from "./components/ChangePasswordModal";
 import { DashboardView } from "./pages/DashboardView";
 import { MembersView } from "./pages/MembersView";
 import { AnnualReportsView } from "./pages/AnnualReportsView";
+import { CensusReportsView } from "./pages/CensusReportsView";
 import { AuditedStatementsView } from "./pages/AuditedStatementsView";
 import { OfficialContactsView } from "./pages/OfficialContactsView";
 import { BasicDetailsView } from "./pages/BasicDetailsView";
@@ -57,6 +58,8 @@ const PortalMain: React.FC = () => {
         return <BasicDetailsView />;
       case "annual-reports":
         return <AnnualReportsView />;
+      case "census-reports":
+        return <CensusReportsView />;
       case "audited-statements":
         return <AuditedStatementsView />;
       case "official-contacts":

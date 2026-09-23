@@ -7,7 +7,7 @@ import { PdfViewerModal } from "../components/PdfViewerModal";
 import { DeleteConfirmationModal } from "../components/DeleteConfirmationModal";
 import { printStatutoryDocument, printStatutorySummaryTable, printPdfData } from "../utils/printDocument";
 import {
-  FileText,
+  FileSpreadsheet,
   Upload,
   Download,
   Eye,
@@ -15,13 +15,11 @@ import {
   Search,
   CheckCircle2,
   AlertCircle,
-  Building2,
-  Calendar,
   Loader2,
   Printer
 } from "lucide-react";
 
-export const AnnualReportsView: React.FC = () => {
+export const CensusReportsView: React.FC = () => {
   const { user, selectedYear, availableYears, districts, syncEventTimestamp } = useAuth();
   const isStateAdmin = user?.role === "STATE_ADMIN";
 
@@ -31,7 +29,7 @@ export const AnnualReportsView: React.FC = () => {
   const [filterYear, setFilterYear] = useState<string>(selectedYear);
   const [filterDistrict, setFilterDistrict] = useState<string>(isStateAdmin ? "ALL" : user?.districtId || "");
 
-  // Upload Form State
+  // Upload Form State (for District Users)
   const [uploadDistrictId, setUploadDistrictId] = useState<string>(user?.districtId || (districts[0]?.id || "dist_asn"));
   const [uploadYearId, setUploadYearId] = useState<string>(selectedYear);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -49,10 +47,10 @@ export const AnnualReportsView: React.FC = () => {
   const fetchReports = async () => {
     try {
       setLoading(true);
-      const data = await api.getAnnualReports();
+      const data = await api.getCensusReports();
       setReports(data);
     } catch (err: any) {
-      console.error("Failed to load annual reports:", err);
+      console.error("Failed to load census reports:", err);
     } finally {
       setLoading(false);
     }
@@ -75,7 +73,8 @@ export const AnnualReportsView: React.FC = () => {
         searchQuery.trim() === "" ||
         r.file_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (r.district_name && r.district_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        r.year_id.toLowerCase().includes(searchQuery.toLowerCase());
+        r.year_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.uploaded_by.toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchYear = filterYear === "ALL" || r.year_id === filterYear;
       const matchDistrict = filterDistrict === "ALL" || r.district_id === filterDistrict;
@@ -89,7 +88,7 @@ export const AnnualReportsView: React.FC = () => {
     if (!file) return;
 
     if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      setStatusMessage({ type: "error", text: "Only PDF files are permitted for Annual Reports." });
+      setStatusMessage({ type: "error", text: "Only PDF files are permitted for Census Reports." });
       return;
     }
 
@@ -117,7 +116,7 @@ export const AnnualReportsView: React.FC = () => {
       reader.onload = async () => {
         const base64Data = reader.result as string;
         try {
-          const res = await api.uploadAnnualReport({
+          const res = await api.uploadCensusReport({
             district_id: uploadDistrictId,
             year_id: uploadYearId,
             file_name: uploadFile.name,
@@ -127,7 +126,7 @@ export const AnnualReportsView: React.FC = () => {
 
           setStatusMessage({
             type: "success",
-            text: `Annual Report uploaded successfully (Version ${res.version}).`,
+            text: `Census Report uploaded successfully (Version ${res.version}).`,
           });
           setUploadFile(null);
           await fetchReports();
@@ -148,10 +147,10 @@ export const AnnualReportsView: React.FC = () => {
     if (!documentToDelete) return;
     try {
       setDeleting(true);
-      await api.deleteAnnualReport(documentToDelete.id);
+      await api.deleteCensusReport(documentToDelete.id);
       // Immediately remove from table state
       setReports((prev) => prev.filter((r) => r.id !== documentToDelete.id));
-      setStatusMessage({ type: "success", text: `Annual Report "${documentToDelete.file_name}" deleted successfully.` });
+      setStatusMessage({ type: "success", text: `Census Report "${documentToDelete.file_name}" deleted successfully.` });
       setDocumentToDelete(null);
     } catch (err: any) {
       setStatusMessage({ type: "error", text: err.message || "Failed to delete report." });
@@ -164,7 +163,7 @@ export const AnnualReportsView: React.FC = () => {
     try {
       let fullDoc = report;
       if (!report.file_data) {
-        fullDoc = await api.getAnnualReportFile(report.id);
+        fullDoc = await api.getCensusReportFile(report.id);
       }
       setActivePdfDoc(fullDoc);
       setPdfModalOpen(true);
@@ -177,7 +176,7 @@ export const AnnualReportsView: React.FC = () => {
     try {
       let fileData = report.file_data;
       if (!fileData) {
-        const full = await api.getAnnualReportFile(report.id);
+        const full = await api.getCensusReportFile(report.id);
         fileData = full.file_data;
       }
       if (!fileData) {
@@ -202,23 +201,23 @@ export const AnnualReportsView: React.FC = () => {
       "Upload Date": new Date(r.uploaded_at).toLocaleString(),
       "Status": r.status,
     }));
-    exportToExcel(rows, `ERBSG_Annual_Reports_${new Date().toISOString().slice(0, 10)}`, "Annual Reports");
+    exportToExcel(rows, `ERBSG_Census_Reports_${new Date().toISOString().slice(0, 10)}`, "Census Reports");
   };
 
   return (
     <div className="space-y-6">
-      {/* Title & Filters */}
+      {/* Title & Actions */}
       <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Annual Reports</h2>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Census Reports</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Official statutory annual reports submission, verification, and archive
+            Official statutory census membership report submission, verification, and archive
           </p>
         </div>
 
         <button
           onClick={handleDownloadExcel}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs self-start md:self-auto transition"
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs self-start md:self-auto transition cursor-pointer"
         >
           <Download className="w-4 h-4" />
           <span>Download Excel</span>
@@ -244,13 +243,13 @@ export const AnnualReportsView: React.FC = () => {
 
       {/* Main Content Layout */}
       <div className={!isStateAdmin ? "grid grid-cols-1 lg:grid-cols-3 gap-6" : "w-full"}>
-        {/* Upload / Replace Panel - only shown to District Users, removed for State Admin */}
+        {/* Upload / Replace Panel - shown to District Users and State Admin when managing a district */}
         {!isStateAdmin && (
           <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-700">
               <Upload className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Upload / Replace Annual Report
+                Upload / Replace Census Report
               </h3>
             </div>
 
@@ -282,10 +281,10 @@ export const AnnualReportsView: React.FC = () => {
                     accept="application/pdf"
                     onChange={handleFileSelect}
                     className="hidden"
-                    id="annualReportFileInput"
+                    id="censusReportFileInput"
                   />
-                  <label htmlFor="annualReportFileInput" className="cursor-pointer">
-                    <FileText className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
+                  <label htmlFor="censusReportFileInput" className="cursor-pointer">
+                    <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
                     <span className="text-xs font-bold text-blue-600 dark:text-blue-400 block">
                       {uploadFile ? uploadFile.name : "Choose PDF from computer"}
                     </span>
@@ -362,8 +361,8 @@ export const AnnualReportsView: React.FC = () => {
               )}
 
               <button
-                onClick={() => printStatutorySummaryTable(filteredReports, "Annual Report", availableYears.find((y) => y.id === filterYear)?.label || filterYear, isStateAdmin)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition"
+                onClick={() => printStatutorySummaryTable(filteredReports, "Census Report", availableYears.find((y) => y.id === filterYear)?.label || filterYear, isStateAdmin)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg transition cursor-pointer"
                 title="Print Summary / PDF Register"
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -375,10 +374,10 @@ export const AnnualReportsView: React.FC = () => {
           {/* Table */}
           <div className="flex-1 overflow-x-auto">
             {loading ? (
-              <div className="p-8 text-center text-xs text-slate-500">Loading reports...</div>
+              <div className="p-8 text-center text-xs text-slate-500">Loading census reports...</div>
             ) : filteredReports.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
-                No Annual Reports found matching current filters.
+                No Census Reports found matching current filters.
               </div>
             ) : (
               <table className="w-full text-xs text-left">
@@ -403,7 +402,7 @@ export const AnnualReportsView: React.FC = () => {
                         <td className="px-3 py-2.5 text-slate-500">{idx + 1}</td>
                         <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-white">
                           <div className="flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                             <span className="truncate max-w-xs" title={report.file_name}>
                               {report.file_name}
                             </span>
@@ -468,7 +467,7 @@ export const AnnualReportsView: React.FC = () => {
         <PdfViewerModal
           isOpen={pdfModalOpen}
           onClose={() => setPdfModalOpen(false)}
-          title={`Annual Report (${availableYears.find((y) => y.id === activePdfDoc.year_id)?.label || activePdfDoc.year_id})`}
+          title={`Census Report (${availableYears.find((y) => y.id === activePdfDoc.year_id)?.label || activePdfDoc.year_id})`}
           fileName={activePdfDoc.file_name}
           fileData={activePdfDoc.file_data}
           uploadedBy={activePdfDoc.uploaded_by}
@@ -482,9 +481,9 @@ export const AnnualReportsView: React.FC = () => {
           isOpen={!!documentToDelete}
           onClose={() => setDocumentToDelete(null)}
           onConfirm={handleConfirmDelete}
-          title="Delete Annual Report"
+          title="Delete Census Report"
           fileName={documentToDelete.file_name}
-          itemType="Annual Report"
+          itemType="Census Report"
           loading={deleting}
         />
       )}

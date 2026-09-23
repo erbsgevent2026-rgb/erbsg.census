@@ -1,27 +1,29 @@
 import { StatutoryDocument } from "../types";
 
 /**
- * Initiates print / PDF generation for a statutory document (Annual Report or Audited Statement).
+ * Prints an actual PDF file directly from its base64 data by creating an in-memory Blob URL
+ * and invoking the browser print dialog.
  */
-export function printStatutoryDocument(
-  doc: StatutoryDocument,
-  type: "Annual Report" | "Audited Statement",
-  yearLabel: string
-): void {
-  // If file_data contains real PDF data, print via iframe
-  if (doc.file_data && doc.file_data.length > 50) {
-    const pdfSrc = doc.file_data.startsWith("data:")
-      ? doc.file_data
-      : `data:application/pdf;base64,${doc.file_data}`;
+export function printPdfData(fileData: string, fileName?: string): void {
+  try {
+    const cleanBase64 = fileData.includes(",") ? fileData.split(",")[1] : fileData;
+    const byteCharacters = atob(cleanBase64.replace(/\s/g, ""));
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "application/pdf" });
+    const blobUrl = URL.createObjectURL(blob);
 
     const printFrame = document.createElement("iframe");
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
     printFrame.style.bottom = "0";
-    printFrame.style.width = "0";
-    printFrame.style.height = "0";
-    printFrame.style.border = "0";
-    printFrame.src = pdfSrc;
+    printFrame.style.width = "1px";
+    printFrame.style.height = "1px";
+    printFrame.style.opacity = "0.01";
+    printFrame.src = blobUrl;
     document.body.appendChild(printFrame);
 
     printFrame.onload = () => {
@@ -30,14 +32,37 @@ export function printStatutoryDocument(
           printFrame.contentWindow?.focus();
           printFrame.contentWindow?.print();
         } catch (e) {
-          const w = window.open(pdfSrc, "_blank");
+          const w = window.open(blobUrl, "_blank");
           if (w) {
             w.focus();
             w.print();
           }
+        } finally {
+          setTimeout(() => {
+            if (document.body.contains(printFrame)) {
+              document.body.removeChild(printFrame);
+            }
+            URL.revokeObjectURL(blobUrl);
+          }, 60000);
         }
-      }, 400);
+      }, 500);
     };
+  } catch (err) {
+    console.error("Failed to print PDF data:", err);
+  }
+}
+
+/**
+ * Initiates print / PDF generation for a statutory document (Annual Report, Audited Statement, or Census Report).
+ */
+export function printStatutoryDocument(
+  doc: StatutoryDocument,
+  type: "Annual Report" | "Audited Statement" | "Census Report",
+  yearLabel: string
+): void {
+  // If file_data contains real PDF data, print via Blob URL
+  if (doc.file_data && doc.file_data.length > 50) {
+    printPdfData(doc.file_data, doc.file_name);
     return;
   }
 
@@ -229,7 +254,7 @@ export function printStatutoryDocument(
  */
 export function printStatutorySummaryTable(
   documents: StatutoryDocument[],
-  type: "Annual Report" | "Audited Statement",
+  type: "Annual Report" | "Audited Statement" | "Census Report",
   yearLabel: string,
   isStateAdmin: boolean
 ): void {

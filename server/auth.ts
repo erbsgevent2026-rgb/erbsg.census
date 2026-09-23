@@ -239,15 +239,20 @@ export function sendPortalEmail(params: {
   subject: string;
   body: string;
   type: string;
+  sensitive?: boolean;
 }): void {
   try {
     const id = `email_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const storedBody = (params.sensitive || params.type === "ADMIN_TEMP_PASSWORD")
+      ? "[SECURE TEMPORARY CREDENTIALS DISPATCHED TO OFFICIAL RECIPIENT - REDACTED FOR PRIVACY & SECURITY]"
+      : params.body;
+
     runQuery(
       `INSERT INTO email_logs (id, recipient_email, recipient_name, bsg_id, subject, body, type, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, params.to, params.name || "", params.bsgId || "", params.subject, params.body, params.type, "SENT"]
+      [id, params.to, params.name || "", params.bsgId || "", params.subject, storedBody, params.type, "SENT"]
     );
-    console.log(`[EMAIL DISPATCHED] To: ${params.to} | Subject: ${params.subject}`);
+    console.log(`[EMAIL DISPATCHED] To: ${params.to} | Subject: ${params.subject} | Type: ${params.type}`);
   } catch (err) {
     console.error("Failed to record email log:", err);
   }

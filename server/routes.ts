@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { queryAll, queryOne, runQuery, saveDatabase, ensureCurrentFinancialYear } from "./db.js";
 import { syncEntityToFirestore } from "./firestoreService.js";
 import {
@@ -72,8 +73,8 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
      WHERE LOWER(bsg_id) = LOWER(?) 
         OR LOWER(bsg_id) = LOWER(?) 
         OR LOWER(email) = LOWER(?)
-        OR (role = 'STATE_ADMIN' AND (LOWER(?) = 'admin' OR LOWER(?) = 'bsg-er-state' OR LOWER(?) = 'er-state' OR LOWER(?) = 'bsgerstate'))`,
-    [cleanIdent, withBsgPrefix, cleanIdent, cleanIdent, cleanIdent, cleanIdent, cleanIdent]
+        OR (role = 'STATE_ADMIN' AND (LOWER(?) = 'admin' OR LOWER(?) = 'bsg-er-state' OR LOWER(?) = 'er-state' OR LOWER(?) = 'bsgerstate' OR LOWER(?) = 'erbsgevent2026@gmail.com'))`,
+    [cleanIdent, withBsgPrefix, cleanIdent, cleanIdent, cleanIdent, cleanIdent, cleanIdent, cleanIdent]
   );
 
   if (!user) {
@@ -89,7 +90,7 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
   const passwordMatch =
     bcrypt.compareSync(password, user.password_hash) ||
     (password === "Test@1234" && user.role === "DISTRICT_USER") ||
-    ((password === "Admin@1234" || password === "Admin@ERBSG2026") && user.role === "STATE_ADMIN");
+    ((password === "Admin@1234" || password === "Admin@ERBSG2026") && user.role === "STATE_ADMIN" && !user.must_change_password);
 
   if (!passwordMatch) {
     logAuditAction({
@@ -108,8 +109,8 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
     return;
   }
 
-  // Ensure database hash matches Admin@1234
-  if (user.role === "STATE_ADMIN" && (password === "Admin@1234" || password === "Admin@ERBSG2026")) {
+  // Ensure database hash matches Admin@1234 if not in must_change_password state
+  if (user.role === "STATE_ADMIN" && (password === "Admin@1234" || password === "Admin@ERBSG2026") && !user.must_change_password) {
     try {
       const updatedHash = bcrypt.hashSync(password, 10);
       runQuery("UPDATE users SET password_hash = ? WHERE id = ?", [updatedHash, user.id]);
@@ -321,7 +322,7 @@ apiRouter.post("/auth/forgot-password", (req: Request, res: Response) => {
      WHERE LOWER(bsg_id) = LOWER(?) 
         OR LOWER(bsg_id) = LOWER(?) 
         OR LOWER(email) = LOWER(?)
-        OR (role = 'STATE_ADMIN' AND (LOWER(?) = 'admin' OR LOWER(?) = 'kikoffclips@gmail.com' OR LOWER(?) = 'bsg-er-state'))`,
+        OR (role = 'STATE_ADMIN' AND (LOWER(?) = 'admin' OR LOWER(?) = 'erbsgevent2026@gmail.com' OR LOWER(?) = 'bsg-er-state'))`,
     [cleanIdent, withBsgPrefix, cleanIdent, cleanIdent, cleanIdent, cleanIdent]
   );
 
@@ -332,6 +333,63 @@ apiRouter.post("/auth/forgot-password", (req: Request, res: Response) => {
     return;
   }
 
+  // SPECIAL ADMIN FLOW:
+  // When Admin requests password reset, generate a cryptographically secure temporary password,
+  // store only its bcrypt hash, set must_change_password = 1, deliver to erbsgevent2026@gmail.com,
+  // and do NOT expose the temporary password in UI, responses, database logs, or application logs.
+  if (user.role === "STATE_ADMIN") {
+    const adminEmail = "erbsgevent2026@gmail.com";
+    const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*";
+    const randBytes = crypto.randomBytes(10);
+    let tempPassword = "ER@";
+    for (let i = 0; i < 8; i++) {
+      tempPassword += charset[randBytes[i] % charset.length];
+    }
+
+    const saltRounds = 10;
+    const tempPasswordHash = bcrypt.hashSync(tempPassword, saltRounds);
+
+    // Update database with new hash and require password change on first login
+    runQuery(
+      "UPDATE users SET password_hash = ?, must_change_password = 1, email = ? WHERE id = ?",
+      [tempPasswordHash, adminEmail, user.id]
+    );
+
+    // Deliver credentials to official email erbsgevent2026@gmail.com
+    sendPortalEmail({
+      to: adminEmail,
+      name: user.name || "State Administrator",
+      bsgId: user.bsg_id,
+      subject: "ERBSG Portal – State Administrator Temporary Access Credentials",
+      body: `Dear State Administrator,\n\nA password reset request was received for your ERBSG Data Control Portal account (${user.bsg_id}).\n\nYour Temporary Access Password: ${tempPassword}\n\nSecurity Instructions:\n1. Log in to the portal using your BSG ID (${user.bsg_id}) or Official Email (${adminEmail}) and this temporary password.\n2. You will be immediately required to set a new personal secure password upon signing in.\n3. This temporary credential will be invalidated once your new password is saved.\n\nRegards,\nEastern Railway Bharat Scouts and Guides\nState Headquarters Data Portal`,
+      type: "ADMIN_TEMP_PASSWORD",
+      sensitive: true
+    });
+
+    logAuditAction({
+      userId: user.id,
+      userName: user.name,
+      bsgId: user.bsg_id,
+      role: user.role,
+      action: "ADMIN_TEMP_PASSWORD_ISSUED",
+      module: "AUTHENTICATION",
+      stateId: user.state_id,
+      districtId: user.district_id,
+      details: `Secure temporary credentials delivered to ${adminEmail}`,
+      ipAddress: req.ip
+    });
+
+    // Return response without exposing temporary password or reset tokens
+    res.json({
+      success: true,
+      message: `Temporary password and reset credentials have been delivered to ${adminEmail}. Please check your email inbox and use the temporary password to sign in. You will then be prompted to set a new secure password.`,
+      email: adminEmail,
+      bsgId: user.bsg_id
+    });
+    return;
+  }
+
+  // STANDARD DISTRICT USER FLOW (Single-use 1-hour token link)
   // Generate secure 1-hour reset token
   const resetToken = generatePasswordResetToken(user.id, user.bsg_id);
   const origin = req.get("origin") || `${req.protocol}://${req.get("host")}`;
@@ -495,8 +553,8 @@ apiRouter.put("/state", authenticateToken, requireStateAdmin, (req: Request, res
 });
 
 apiRouter.get("/districts", (req: Request, res: Response) => {
-  // Publicly queryable list of Eastern Railway districts
-  const districts = queryAll<any>("SELECT * FROM districts WHERE state_id = 'state_er' ORDER BY name ASC");
+  // Publicly queryable list of Eastern Railway districts (strictly unique by ID)
+  const districts = queryAll<any>("SELECT * FROM districts WHERE state_id = 'state_er' GROUP BY id ORDER BY name ASC");
   res.json(districts);
 });
 
@@ -842,6 +900,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
 
     // Document counts
     const arCount = queryOne<any>("SELECT count(*) as total FROM annual_reports WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
+    const crCount = queryOne<any>("SELECT count(*) as total FROM census_reports WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
     const asCount = queryOne<any>("SELECT count(*) as total FROM audited_statements WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
     const ocCount = queryOne<any>("SELECT count(DISTINCT district_id) as total FROM official_contacts WHERE state_id = 'state_er' AND year_id = ? AND is_selected = 1", [yearId]);
 
@@ -855,17 +914,29 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
         COALESCE(mc.unit_leaders_total, 0) as unit_leaders_total,
         COALESCE(mc.professionals_total, 0) as professionals_total,
         COALESCE(mc.grand_total, 0) as grand_total,
-        CASE WHEN ar.id IS NOT NULL THEN 1 ELSE 0 END as has_annual_report,
-        CASE WHEN ast.id IS NOT NULL THEN 1 ELSE 0 END as has_audited_statement,
+        CASE WHEN ar.district_id IS NOT NULL THEN 1 ELSE 0 END as has_annual_report,
+        CASE WHEN cr.district_id IS NOT NULL THEN 1 ELSE 0 END as has_census_report,
+        CASE WHEN ast.district_id IS NOT NULL THEN 1 ELSE 0 END as has_audited_statement,
         CASE WHEN oc.district_id IS NOT NULL THEN 1 ELSE 0 END as has_official_contacts
       FROM districts d
-      LEFT JOIN member_counts mc ON d.id = mc.district_id AND mc.year_id = ?
-      LEFT JOIN annual_reports ar ON d.id = ar.district_id AND ar.year_id = ?
-      LEFT JOIN audited_statements ast ON d.id = ast.district_id AND ast.year_id = ?
+      LEFT JOIN (
+        SELECT district_id,
+               SUM(youth_total) as youth_total,
+               SUM(unit_leaders_total) as unit_leaders_total,
+               SUM(professionals_total) as professionals_total,
+               SUM(grand_total) as grand_total
+        FROM member_counts
+        WHERE year_id = ?
+        GROUP BY district_id
+      ) mc ON d.id = mc.district_id
+      LEFT JOIN (SELECT DISTINCT district_id FROM annual_reports WHERE year_id = ?) ar ON d.id = ar.district_id
+      LEFT JOIN (SELECT DISTINCT district_id FROM census_reports WHERE year_id = ?) cr ON d.id = cr.district_id
+      LEFT JOIN (SELECT DISTINCT district_id FROM audited_statements WHERE year_id = ?) ast ON d.id = ast.district_id
       LEFT JOIN (SELECT DISTINCT district_id FROM official_contacts WHERE year_id = ? AND is_selected = 1) oc ON d.id = oc.district_id
       WHERE d.state_id = 'state_er'
+      GROUP BY d.id
       ORDER BY d.name ASC
-    `, [yearId, yearId, yearId, yearId]);
+    `, [yearId, yearId, yearId, yearId, yearId]);
 
     // Multi-year Member Growth Statistics (State level) calculated dynamically from database
     const allYears = queryAll<any>("SELECT id, label, is_current FROM academic_years ORDER BY label ASC");
@@ -932,6 +1003,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
       unitLeaders: memberAgg?.unit_leaders_total || 0,
       professionals: memberAgg?.professionals_total || 0,
       annualReportsUploaded: arCount?.total || 0,
+      censusReportsUploaded: crCount?.total || 0,
       auditedStatementsUploaded: asCount?.total || 0,
       districtsWithContacts: ocCount?.total || 0,
       districtBreakdown,
@@ -948,6 +1020,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
     );
 
     const hasAr = queryOne<any>("SELECT id, file_name FROM annual_reports WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
+    const hasCr = queryOne<any>("SELECT id, file_name FROM census_reports WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
     const hasAs = queryOne<any>("SELECT id, file_name FROM audited_statements WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
     const contacts = queryAll<any>("SELECT * FROM official_contacts WHERE district_id = ? AND year_id = ? AND is_selected = 1", [districtId, yearId]);
 
@@ -1036,6 +1109,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
       membership: safeMembership,
       documents: {
         annualReport: hasAr || null,
+        censusReport: hasCr || null,
         auditedStatement: hasAs || null,
         officialContactsCount: contacts.length
       },
@@ -1207,23 +1281,23 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
 // -------------------------------------------------------------
 
 const FIXED_OFFICIAL_POSITIONS = [
-  "President",
-  "District Chief Commissioner",
-  "District Secretary",
-  "District Commissioner (S)",
-  "District Commissioner (G)",
-  "District Organising Commissioner (Scouts)",
-  "District Organising Commissioner (Guides)",
-  "District Training Commissioner of Scouts",
-  "District Training Commissioner of Guides",
-  "District Youth Committee Chairman",
-  "District Media Co-ordinator",
-  "Jt. District Secretary",
-  "Asstt. District Secretary",
-  "District Treasurer",
-  "Nodal Officer of Aapdamitra",
-  "Co-chairman of Youth Committee",
-  "Growth Coordinator"
+  "1. President",
+  "2. District Chief Commissioner",
+  "3. District Secretary",
+  "4. District Commissioner (S)",
+  "5. District Commissioner (G)",
+  "6. District Organising Commissioner (Scouts)",
+  "7. District Organising Commissioner (Guides)",
+  "8. District Training Commissioner of Scouts",
+  "9. District Training Commissioner of Guides",
+  "10. District Youth Committee Chairman",
+  "11. District Media Co-ordinator",
+  "12. Jt. District Secretary",
+  "13. Asstt. District Secretary",
+  "14. District Treasurer",
+  "15. Nodal Officer of Aapdamitra",
+  "16. Co-chairman of Youth Committee",
+  "17. Growth Coordinator"
 ];
 
 apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Response) => {
@@ -1249,15 +1323,18 @@ apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Respo
     [targetDistrictId, yearId]
   );
 
+  const cleanName = (s: string) => (s || "").replace(/^\d+\.\s*/, "").trim().toLowerCase();
+
   // Return the fixed list of 17 positions in order, mapped with latest saved details
   const results = FIXED_OFFICIAL_POSITIONS.map((posName, idx) => {
     const posOrder = idx + 1;
+    const basePosName = cleanName(posName);
     const match = existing.find(e =>
       e.position_order === posOrder ||
-      (e.position_name && e.position_name.trim().toLowerCase() === posName.trim().toLowerCase()) ||
-      (posName === "District Secretary" && e.scouting_rank?.toLowerCase().includes("secretary") && !e.scouting_rank?.toLowerCase().includes("jt") && !e.scouting_rank?.toLowerCase().includes("asstt")) ||
-      (posName === "District Commissioner (S)" && (e.scouting_rank?.toLowerCase().includes("commissioner (scout") || e.scouting_rank?.toLowerCase().includes("commissioner (s)"))) ||
-      (posName === "District Commissioner (G)" && (e.scouting_rank?.toLowerCase().includes("guide commissioner") || e.scouting_rank?.toLowerCase().includes("commissioner (g)")))
+      (e.position_name && cleanName(e.position_name) === basePosName) ||
+      (basePosName === "district secretary" && e.scouting_rank?.toLowerCase().includes("secretary") && !e.scouting_rank?.toLowerCase().includes("jt") && !e.scouting_rank?.toLowerCase().includes("asstt")) ||
+      (basePosName.includes("commissioner (s)") && (e.scouting_rank?.toLowerCase().includes("commissioner (scout") || e.scouting_rank?.toLowerCase().includes("commissioner (s)"))) ||
+      (basePosName.includes("commissioner (g)") && (e.scouting_rank?.toLowerCase().includes("guide commissioner") || e.scouting_rank?.toLowerCase().includes("commissioner (g)")))
     );
 
     return {
@@ -1470,6 +1547,115 @@ apiRouter.delete("/annual-reports/:id", authenticateToken, (req: Request, res: R
 
   broadcastSyncEvent("ANNUAL_REPORT_DELETED", { id });
   res.json({ message: "Annual report deleted successfully." });
+});
+
+// Census Reports
+apiRouter.get("/census-reports", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const yearId = req.query.year_id ? String(req.query.year_id) : null;
+  const districtId = user.role === "STATE_ADMIN" ? (req.query.district_id ? String(req.query.district_id) : null) : user.district_id;
+
+  let query = `
+    SELECT cr.id, cr.state_id, cr.district_id, cr.year_id, cr.file_name, cr.file_size,
+           cr.version, cr.uploaded_by, cr.uploaded_at, cr.status,
+           d.name as district_name
+    FROM census_reports cr
+    LEFT JOIN districts d ON cr.district_id = d.id
+    WHERE cr.state_id = 'state_er'
+  `;
+  const params: any[] = [];
+
+  if (districtId) {
+    query += " AND cr.district_id = ?";
+    params.push(districtId);
+  }
+  if (yearId) {
+    query += " AND cr.year_id = ?";
+    params.push(yearId);
+  }
+
+  query += " ORDER BY cr.uploaded_at DESC";
+  const reports = queryAll<any>(query, params);
+  res.json(reports);
+});
+
+apiRouter.post("/census-reports", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { district_id, year_id, file_name, file_size, file_data } = req.body;
+
+  if (!enforceDistrictAccess(req, res, district_id)) return;
+
+  if (!file_name || !file_data) {
+    res.status(400).json({ error: "File name and PDF data are required." });
+    return;
+  }
+
+  // Check existing version
+  const existing = queryOne<any>(
+    "SELECT id, version FROM census_reports WHERE district_id = ? AND year_id = ? ORDER BY version DESC LIMIT 1",
+    [district_id, year_id]
+  );
+  const version = existing ? existing.version + 1 : 1;
+
+  const id = `cr_${district_id}_${year_id}_v${version}_${Date.now()}`;
+  runQuery(
+    `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by)
+     VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?)`,
+    [id, district_id, year_id, file_name, file_size || 500000, file_data, version, user.name]
+  );
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: version > 1 ? "REPLACE_CENSUS_REPORT" : "UPLOAD_CENSUS_REPORT",
+    module: "CENSUS_REPORT",
+    districtId: district_id,
+    details: `${version > 1 ? "Replaced" : "Uploaded"} Census Report: ${file_name} (v${version}) for ${year_id}`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("CENSUS_REPORT_UPLOADED", { districtId: district_id, yearId: year_id, version });
+  res.status(201).json({ message: "Census report uploaded successfully.", id, version });
+});
+
+apiRouter.get("/census-reports/:id", authenticateToken, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const report = queryOne<any>("SELECT * FROM census_reports WHERE id = ?", [id]);
+  if (!report) {
+    res.status(404).json({ error: "Census report not found." });
+    return;
+  }
+  if (!enforceDistrictAccess(req, res, report.district_id)) return;
+  res.json(report);
+});
+
+apiRouter.delete("/census-reports/:id", authenticateToken, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const report = queryOne<any>("SELECT district_id, file_name FROM census_reports WHERE id = ?", [id]);
+  if (!report) {
+    res.status(404).json({ error: "Census report not found." });
+    return;
+  }
+  if (!enforceDistrictAccess(req, res, report.district_id)) return;
+
+  runQuery("DELETE FROM census_reports WHERE id = ?", [id]);
+
+  logAuditAction({
+    userId: req.user!.id,
+    userName: req.user!.name,
+    bsgId: req.user!.bsg_id,
+    role: req.user!.role,
+    action: "DELETE_CENSUS_REPORT",
+    module: "CENSUS_REPORT",
+    districtId: report.district_id,
+    details: `Deleted Census Report: ${report.file_name}`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("CENSUS_REPORT_DELETED", { id });
+  res.json({ message: "Census report deleted successfully." });
 });
 
 // Audited Statements

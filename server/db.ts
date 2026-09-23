@@ -47,12 +47,15 @@ export async function getDb(): Promise<SqlJsDatabase> {
   initSchemaAndSeed(dbInstance);
   ensureCurrentFinancialYear();
 
-  // Ensure state admin password is synchronized to Admin@1234
+  // Ensure state admin password and official email are synchronized
   try {
     const adminHash = bcrypt.hashSync("Admin@1234", 10);
-    dbInstance.run("UPDATE users SET password_hash = ? WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'", [adminHash]);
+    dbInstance.run(
+      "UPDATE users SET password_hash = ?, email = 'erbsgevent2026@gmail.com' WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'",
+      [adminHash]
+    );
   } catch (syncErr) {
-    console.warn("Could not sync admin password on startup:", syncErr);
+    console.warn("Could not sync admin credentials on startup:", syncErr);
   }
 
   saveDatabase();
@@ -283,6 +286,20 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       status TEXT DEFAULT 'APPROVED'
     );
 
+    CREATE TABLE IF NOT EXISTS census_reports (
+      id TEXT PRIMARY KEY,
+      state_id TEXT NOT NULL,
+      district_id TEXT NOT NULL,
+      year_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      file_data TEXT,
+      version INTEGER DEFAULT 1,
+      uploaded_by TEXT NOT NULL,
+      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'APPROVED'
+    );
+
     CREATE TABLE IF NOT EXISTS audited_statements (
       id TEXT PRIMARY KEY,
       state_id TEXT NOT NULL,
@@ -483,6 +500,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       db.run("DELETE FROM academic_years WHERE id = ?", [yr]);
       db.run("DELETE FROM member_counts WHERE year_id = ?", [yr]);
       db.run("DELETE FROM annual_reports WHERE year_id = ?", [yr]);
+      db.run("DELETE FROM census_reports WHERE year_id = ?", [yr]);
       db.run("DELETE FROM audited_statements WHERE year_id = ?", [yr]);
       db.run("DELETE FROM official_contacts WHERE year_id = ?", [yr]);
       db.run("DELETE FROM deadlines WHERE year_id = ?", [yr]);
@@ -593,6 +611,37 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     }
   } catch (err) {
     console.error("Error seeding initial 17 official positions:", err);
+  }
+
+  // --- Migration: Ensure census_reports table exists ---
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS census_reports (
+        id TEXT PRIMARY KEY,
+        state_id TEXT NOT NULL,
+        district_id TEXT NOT NULL,
+        year_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        file_data TEXT,
+        version INTEGER DEFAULT 1,
+        uploaded_by TEXT NOT NULL,
+        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'APPROVED'
+      );
+    `);
+
+    const crCheck = db.exec("SELECT count(*) FROM census_reports");
+    const crCount = Number(crCheck[0]?.values[0]?.[0] || 0);
+    if (crCount === 0) {
+      const samplePdfBase64 = "JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY5L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0wuyExWSEnNLchLLE7VUXBMTs1NzFEwtbAwt9BFyWdkZGBgcGZwcHQC0f55xRmlCsF5pXmpyQohGYl5eam5AFJMEe0KZW5kc3RyZWFtCmVuZG9iagoxIDAgb2JqCjw8L1R5cGUvUGFnZXMvQ291bnQgMS9LaWRzWzMgMCBSXT4+CmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PC9GMSA0IDAgUj4+Pj4vQ29udGVudHMgMiAwIFI+PgplbmRvYmoKNCAwIG9iago8PC9UeXBlL0ZvbnQvU3VidHlwZS9UeXBlMS9CYXNlRm9udC9IZWx2ZXRpY2E+PgplbmRvYmoKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMSAwIFI+PgplbmRvYmoKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCA1IDAgUj4+CiUlRU9G";
+      db.run(
+        `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["cr_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Census_Report_2026_2027.pdf", 489100, samplePdfBase64, 1, "Central District User"]
+      );
+    }
+  } catch (err) {
+    console.error("Error creating or seeding census_reports table:", err);
   }
 
   // Ensure member counts exist for Liluah District across active academic year
@@ -844,7 +893,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       [
         "usr_state_admin",
         "BSG-ER-STATE",
-        "admin@easternrailway.bsg.org",
+        "erbsgevent2026@gmail.com",
         "State Administrator (Eastern Railway)",
         "+91 33 2222 4567",
         adminPasswordHash,
@@ -960,6 +1009,11 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     db.run(
       `INSERT INTO annual_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ["ar_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Annual_Report_2026_2027.pdf", 458200, samplePdfBase64, 1, "Central District User"]
+    );
+
+    db.run(
+      `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["cr_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Census_Report_2026_2027.pdf", 489100, samplePdfBase64, 1, "Central District User"]
     );
 
     db.run(

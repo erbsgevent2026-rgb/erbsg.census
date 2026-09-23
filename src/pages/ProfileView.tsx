@@ -109,7 +109,7 @@ export const ProfileView: React.FC = () => {
               <span className="text-slate-400 block mb-0.5">Official Email</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Mail className="w-3.5 h-3.5 text-slate-400" />
-                {user?.email}
+                {user?.role === "STATE_ADMIN" ? "erbsgevent2026@gmail.com" : user?.email}
               </span>
             </div>
 
@@ -117,7 +117,9 @@ export const ProfileView: React.FC = () => {
               <span className="text-slate-400 block mb-0.5">Jurisdiction</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                {user?.districtName || "Eastern Railway State (All 8 Districts)"}
+                {user?.role === "STATE_ADMIN"
+                  ? "Eastern Railway State (All 9 Districts)"
+                  : user?.districtName || "District User"}
               </span>
             </div>
 
@@ -125,7 +127,7 @@ export const ProfileView: React.FC = () => {
               <span className="text-slate-400 block mb-0.5">Role Authority</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200">
                 {user?.role === "STATE_ADMIN"
-                  ? "State Administrator • Full Zone Access"
+                  ? "State Administrator • Limited Access"
                   : "District Officer • Strict District Data Isolation"}
               </span>
             </div>

@@ -5,6 +5,7 @@ import {
   Users,
   Building2,
   FileText,
+  FileSpreadsheet,
   FileCheck,
   PhoneCall,
   CheckCircle2,
@@ -94,6 +95,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     staff: d.professionals_total,
     total: d.grand_total,
     arStatus: d.has_annual_report ? "Uploaded" : "Pending",
+    crStatus: d.has_census_report ? "Uploaded" : "Pending",
     asStatus: d.has_audited_statement ? "Uploaded" : "Pending",
     contactStatus: d.has_official_contacts ? "Selected" : "Missing",
   }));
@@ -111,6 +113,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
         "Professionals / Staff": d.professionals_total,
         "Grand Total": d.grand_total,
         "Annual Report": d.has_annual_report ? "Submitted" : "Pending",
+        "Census Report": d.has_census_report ? "Submitted" : "Pending",
         "Audited Statement": d.has_audited_statement ? "Submitted" : "Pending",
         "Official Contacts": d.has_official_contacts ? "Configured" : "Pending",
       }));
@@ -336,7 +339,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
           </div>
 
           {/* Statutory Documents Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-between">
               <div className="flex items-center gap-3.5">
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-xl">
@@ -352,7 +355,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-24 bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                <div className="w-20 bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
                   <div
                     className="bg-blue-600 h-2.5 rounded-full"
                     style={{
@@ -362,7 +365,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   onClick={() => onNavigate("annual-reports")}
-                  className="p-1 text-slate-400 hover:text-blue-600"
+                  className="p-1 text-slate-400 hover:text-blue-600 cursor-pointer"
+                >
+                  <ArrowUpRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-between">
+              <div className="flex items-center gap-3.5">
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 rounded-xl">
+                  <FileSpreadsheet className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Census Reports Compliance
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {stats.censusReportsUploaded || 0} of {stats.totalDistricts} Districts Uploaded
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-20 bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="bg-amber-600 h-2.5 rounded-full"
+                    style={{
+                      width: `${((stats.censusReportsUploaded || 0) / Math.max(stats.totalDistricts, 1)) * 100}%`,
+                    }}
+                  ></div>
+                </div>
+                <button
+                  onClick={() => onNavigate("census-reports")}
+                  className="p-1 text-slate-400 hover:text-amber-600 cursor-pointer"
                 >
                   <ArrowUpRight className="w-4 h-4" />
                 </button>
@@ -384,7 +419,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-24 bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                <div className="w-20 bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
                   <div
                     className="bg-emerald-600 h-2.5 rounded-full"
                     style={{
@@ -394,7 +429,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   onClick={() => onNavigate("audited-statements")}
-                  className="p-1 text-slate-400 hover:text-emerald-600"
+                  className="p-1 text-slate-400 hover:text-emerald-600 cursor-pointer"
                 >
                   <ArrowUpRight className="w-4 h-4" />
                 </button>
@@ -423,13 +458,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                     <th className="px-4 py-3">Code</th>
                     <th className="px-4 py-3 text-right">Total Members</th>
                     <th className="px-4 py-3 text-center">Annual Report</th>
+                    <th className="px-4 py-3 text-center">Census Report</th>
                     <th className="px-4 py-3 text-center">Audited Statement</th>
                     <th className="px-4 py-3 text-center">Official Contacts</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                  {(stats.districtBreakdown || []).map((row: any) => (
-                    <tr key={row.district_id} className="hover:bg-slate-50 dark:hover:bg-slate-750">
+                  {(stats.districtBreakdown || []).map((row: any, idx: number) => (
+                    <tr key={`${row.district_id || "dist"}_${idx}`} className="hover:bg-slate-50 dark:hover:bg-slate-750">
                       <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
                         {row.district_name}
                       </td>
@@ -439,6 +475,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {row.has_annual_report ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle2 className="w-3 h-3" /> Uploaded
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
+                            <Clock className="w-3 h-3" /> Pending
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.has_census_report ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
                             <CheckCircle2 className="w-3 h-3" /> Uploaded
                           </span>
@@ -561,7 +608,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               Statutory Submission Status Checklist
             </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex items-start justify-between">
                 <div>
                   <h4 className="font-bold text-xs text-slate-900 dark:text-white">Annual Report</h4>
@@ -574,7 +621,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   onClick={() => onNavigate("annual-reports")}
-                  className="text-xs font-bold text-blue-600 hover:underline"
+                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                >
+                  Manage
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex items-start justify-between">
+                <div>
+                  <h4 className="font-bold text-xs text-slate-900 dark:text-white">Census Report</h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {stats.documents?.censusReport ? stats.documents.censusReport.file_name : "Not yet uploaded"}
+                  </p>
+                  <span className={`inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${stats.documents?.censusReport ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"}`}>
+                    {stats.documents?.censusReport ? "✓ Completed" : "! Pending Upload"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => onNavigate("census-reports")}
+                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
                 >
                   Manage
                 </button>
@@ -592,7 +657,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   onClick={() => onNavigate("audited-statements")}
-                  className="text-xs font-bold text-blue-600 hover:underline"
+                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
                 >
                   Manage
                 </button>
@@ -610,7 +675,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 </div>
                 <button
                   onClick={() => onNavigate("official-contacts")}
-                  className="text-xs font-bold text-blue-600 hover:underline"
+                  className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
                 >
                   Manage
                 </button>
