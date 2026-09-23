@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
-import { OfficialContact } from "../types";
+import { OfficialContact, FIXED_OFFICIAL_POSITIONS } from "../types";
 import { exportToExcel } from "../utils/excelExport";
 import {
   Building2,
@@ -10,10 +10,13 @@ import {
   Download,
   AlertCircle,
   Loader2,
-  UserPlus,
-  Trash2,
-  UserCheck,
-  ShieldAlert
+  PhoneCall,
+  User,
+  Hash,
+  Phone,
+  Mail,
+  Shield,
+  Check
 } from "lucide-react";
 
 export const OfficialContactsView: React.FC = () => {
@@ -36,48 +39,40 @@ export const OfficialContactsView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
 
   const fetchContacts = async () => {
     try {
       setLoading(true);
       const data = await api.getOfficialContacts(targetDistrictId, selectedYear);
-      if (data.length === 0 && !isStateAdmin) {
-        // Provide the two initial slots if completely empty
-        const defaultSlots: OfficialContact[] = [
-          {
-            id: `temp_1_${Date.now()}`,
-            state_id: "state_er",
-            district_id: targetDistrictId,
-            year_id: selectedYear,
-            name: "",
-            railway_designation: "",
-            scouting_rank: "District Commissioner (Scout)",
-            bsg_id: "",
-            phone: "",
-            email: "",
-            is_selected: 1,
-          },
-          {
-            id: `temp_2_${Date.now()}`,
-            state_id: "state_er",
-            district_id: targetDistrictId,
-            year_id: selectedYear,
-            name: "",
-            railway_designation: "",
-            scouting_rank: "District Secretary",
-            bsg_id: "",
-            phone: "",
-            email: "",
-            is_selected: 1,
-          },
-        ];
-        setContacts(defaultSlots);
-      } else {
-        setContacts(data);
-      }
+      
+      // Ensure all 17 fixed positions are always initialized in exact order
+      const fullList: OfficialContact[] = FIXED_OFFICIAL_POSITIONS.map((posName, idx) => {
+        const posOrder = idx + 1;
+        const existing = data.find(
+          (c) =>
+            c.position_order === posOrder ||
+            c.position_name?.trim().toLowerCase() === posName.trim().toLowerCase() ||
+            c.scouting_rank?.trim().toLowerCase() === posName.trim().toLowerCase()
+        );
+
+        return {
+          id: existing?.id || `oc_${targetDistrictId}_${selectedYear}_pos_${posOrder}`,
+          state_id: "state_er",
+          district_id: targetDistrictId,
+          year_id: selectedYear,
+          position_order: posOrder,
+          position_name: posName,
+          name: existing?.name || "",
+          bsg_id: existing?.bsg_id || existing?.bsg_uid || "",
+          phone: existing?.phone || "",
+          email: existing?.email || "",
+          is_selected: 1,
+        };
+      });
+
+      setContacts(fullList);
     } catch (err: any) {
-      setStatusMessage({ type: "error", text: err.message || "Failed to load contacts." });
+      setStatusMessage({ type: "error", text: err.message || "Failed to load official contacts." });
     } finally {
       setLoading(false);
     }
@@ -90,77 +85,27 @@ export const OfficialContactsView: React.FC = () => {
   const handleFieldChange = (index: number, field: keyof OfficialContact, value: string) => {
     setContacts((prev) => {
       const next = [...prev];
-      const updated = { ...next[index], [field]: value };
-      if (field === "scouting_rank") {
-        updated.designation = value;
-      }
-      if (field === "bsg_id") {
-        updated.bsg_uid = value;
-      }
-      next[index] = updated;
+      next[index] = {
+        ...next[index],
+        [field]: value,
+        ...(field === "bsg_id" ? { bsg_uid: value } : {}),
+      };
       return next;
     });
   };
 
-  const handleAddRepresentative = () => {
-    const newRep: OfficialContact = {
-      id: `temp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      state_id: "state_er",
-      district_id: targetDistrictId,
-      year_id: selectedYear,
-      name: "",
-      railway_designation: "",
-      scouting_rank: "",
-      bsg_id: "",
-      phone: "",
-      email: "",
-      is_selected: 1,
-    };
-    setContacts((prev) => [...prev, newRep]);
-    setStatusMessage({ type: "success", text: "New Authorized Representative slot added. Please fill in details and save." });
-  };
-
-  const handleConfirmDelete = async () => {
-    if (deleteIndex === null) return;
-    const target = contacts[deleteIndex];
-
-    if (target.id && !target.id.startsWith("temp_")) {
-      try {
-        setSaving(true);
-        await api.deleteOfficialContact(target.id, targetDistrictId);
-      } catch (err: any) {
-        setStatusMessage({ type: "error", text: err.message || "Failed to delete representative." });
-        setDeleteIndex(null);
-        setSaving(false);
-        return;
-      }
-    }
-
-    const updated = contacts.filter((_, idx) => idx !== deleteIndex);
-    setContacts(updated);
-    setDeleteIndex(null);
-    setSaving(false);
-    setStatusMessage({ type: "success", text: "Authorized Representative deleted successfully." });
-
-    // Persist changes
-    try {
-      await api.saveOfficialContacts(targetDistrictId, selectedYear, updated);
-    } catch {
-      // Ignored
-    }
-  };
-
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isStateAdmin) return;
     setSaving(true);
     setStatusMessage(null);
 
     try {
       const res = await api.saveOfficialContacts(targetDistrictId, selectedYear, contacts);
-      setStatusMessage({ type: "success", text: res.message || "Authorized Representatives saved successfully." });
+      setStatusMessage({ type: "success", text: res.message || "Official Contact Person details saved successfully." });
       await fetchContacts();
     } catch (err: any) {
-      setStatusMessage({ type: "error", text: err.message || "Failed to save contacts." });
+      setStatusMessage({ type: "error", text: err.message || "Failed to save official contacts." });
     } finally {
       setSaving(false);
     }
@@ -171,58 +116,64 @@ export const OfficialContactsView: React.FC = () => {
     const districtName = activeDistrictObj?.name || user?.districtName || "District";
     const yearLabel = availableYears.find((y) => y.id === selectedYear)?.label || selectedYear;
 
-    const rows = contacts.map((c, i) => ({
-      "SL No": i + 1,
-      "Representative Name": c.name || "Not specified",
-      "Railway Designation": c.railway_designation || "Not specified",
-      "Scouting Rank": c.scouting_rank || c.designation || "Not specified",
-      "BSG ID": c.bsg_id || c.bsg_uid || "—",
-      "Mobile Number": c.phone || "—",
-      "Email Address": c.email || "—",
-      "District": districtName,
-      "Financial Year": yearLabel,
-    }));
+    const rows = contacts.map((c, i) => {
+      const posNumber = i + 1;
+      const cleanTitle = (c.position_name || FIXED_OFFICIAL_POSITIONS[i]).replace(/^\d+\.\s*/, "");
+      return {
+        "SL No": posNumber,
+        "Official Position": `${posNumber}. ${cleanTitle}`,
+        "Full Name": c.name || "—",
+        "BSG ID": c.bsg_id || "—",
+        "Mobile Number": c.phone || "—",
+        "Email ID": c.email || "—",
+        "District": districtName,
+        "Financial Year": yearLabel,
+      };
+    });
 
-    exportToExcel(rows, `ERBSG_Authorized_Representatives_${districtName}_${yearLabel}`, "Authorized Representatives");
+    exportToExcel(rows, `ERBSG_Official_Contact_Persons_${districtName}_${yearLabel}`, "Official Positions");
   };
 
   const activeDistrictObj = districts.find((d) => d.id === targetDistrictId);
   const districtName = activeDistrictObj?.name || user?.districtName || "District";
   const yearLabel = availableYears.find((y) => y.id === selectedYear)?.label || selectedYear;
 
+  const configuredCount = contacts.filter((c) => c.name?.trim()).length;
+
   return (
     <div className="space-y-6">
       {/* Top Banner Card */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-100 text-blue-700 tracking-wide">
+            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 tracking-wide">
               Statutory Governance
             </span>
-            <span className="text-xs font-semibold text-slate-500">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {districtName} • Session {yearLabel}
             </span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900 mt-1 flex items-center gap-2">
-            <UserCheck className="w-5 h-5 text-blue-600" />
-            <span>Authorized Representatives</span>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mt-1 flex items-center gap-2">
+            <PhoneCall className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            <span>Official Contact Person</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Designate authorized contact persons representing Eastern Railway Bharat Scouts and Guides
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            17 Fixed Statutory Official Positions for Eastern Railway Bharat Scouts and Guides
           </p>
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
           {isStateAdmin && (
-            <div className="flex items-center bg-slate-100 rounded-lg px-2.5 py-1.5 text-xs font-semibold border border-slate-200">
-              <Building2 className="w-3.5 h-3.5 text-slate-500 mr-1.5" />
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-semibold border border-slate-200 dark:border-slate-700">
+              <Building2 className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 mr-1.5" />
               <select
                 value={targetDistrictId}
                 onChange={(e) => setTargetDistrictId(e.target.value)}
-                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer pr-2"
+                className="bg-transparent font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer pr-2"
+                aria-label="Select District"
               >
                 {districts.map((d) => (
-                  <option key={d.id} value={d.id} className="text-slate-900 bg-white">
+                  <option key={d.id} value={d.id} className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">
                     {d.name}
                   </option>
                 ))}
@@ -230,21 +181,10 @@ export const OfficialContactsView: React.FC = () => {
             </div>
           )}
 
-          {!isStateAdmin && (
-            <button
-              type="button"
-              onClick={handleAddRepresentative}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>+ Add Authorized Representative</span>
-            </button>
-          )}
-
           <button
             type="button"
             onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>Excel Export</span>
@@ -255,337 +195,244 @@ export const OfficialContactsView: React.FC = () => {
       {/* Status Feedback */}
       {statusMessage && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center gap-2 font-medium ${
+          className={`p-3.5 rounded-xl border text-xs flex items-center gap-2 font-medium animate-in fade-in duration-200 ${
             statusMessage.type === "success"
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-red-50 border-red-200 text-red-800"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-200"
+              : "bg-red-50 border-red-200 text-red-800 dark:bg-red-950/40 dark:border-red-800 dark:text-red-200"
           }`}
         >
           {statusMessage.type === "success" ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           ) : (
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
           )}
           <span>{statusMessage.text}</span>
         </div>
       )}
 
-      {/* Representatives Container */}
-      <div className="space-y-4">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/70">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase text-slate-800 tracking-wider">
-                Official Representatives ({contacts.length})
-              </span>
-              {isStateAdmin ? (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                  State Admin (View-Only)
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
-                  Editable District Record
-                </span>
-              )}
-            </div>
-
-            {!isStateAdmin ? (
-              <span className="text-[11px] text-slate-500 font-medium">
-                Add, edit, or remove representatives as needed. Click "Save Official Contacts" to persist.
+      {/* 17 Fixed Positions Container */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+        {/* Header bar */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/70 dark:bg-slate-950/50">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase text-slate-800 dark:text-slate-200 tracking-wider flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              Official Positions (17)
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+              {configuredCount}/17 Configured
+            </span>
+            {isStateAdmin ? (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                State Admin (View-Only)
               </span>
             ) : (
-              <span className="text-[11px] text-slate-500 font-medium">
-                Viewing official representatives submitted by {districtName}.
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                Editable District Record
               </span>
             )}
           </div>
 
-          <div className="p-5 space-y-4">
-            {loading ? (
-              <div className="p-12 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2">
-                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-                <span>Loading authorized representatives...</span>
-              </div>
-            ) : contacts.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 text-xs border border-dashed border-slate-300 rounded-xl bg-slate-50">
-                <p className="font-semibold text-slate-700">No authorized representatives found.</p>
-                <p className="mt-1">
-                  {isStateAdmin
-                    ? `No official representatives registered by ${districtName} for this financial year yet.`
-                    : "Click \"+ Add Authorized Representative\" above to add your district's first representative."}
-                </p>
-                {!isStateAdmin && (
-                  <button
-                    type="button"
-                    onClick={handleAddRepresentative}
-                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Add Representative</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              contacts.map((c, index) => (
-                <div
-                  key={c.id || index}
-                  className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition space-y-3"
-                >
-                  {/* Card Subheader */}
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center">
-                        {index + 1}
-                      </span>
-                      <span className="text-xs font-bold text-slate-800">
-                        Authorized Representative #{index + 1}
-                      </span>
-                    </div>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+            {isStateAdmin
+              ? `Viewing the 17 statutory official positions for ${districtName}.`
+              : `Update contact details for the 17 positions of ${districtName}. Fixed list — no positions can be added or deleted.`}
+          </span>
+        </div>
 
-                    {!isStateAdmin && (
-                      <button
-                        type="button"
-                        id={`btn-delete-rep-${index}`}
-                        onClick={() => setDeleteIndex(index)}
-                        className="flex items-center gap-1 px-2.5 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg text-xs font-semibold transition border border-red-200 cursor-pointer"
-                        title="Delete this representative"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete</span>
-                      </button>
-                    )}
+        {/* Positions Cards List */}
+        <div className="p-4 sm:p-5 space-y-4">
+          {loading ? (
+            <div className="p-16 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2.5">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+              <span className="font-semibold text-slate-700 dark:text-slate-300">Loading 17 Official Positions...</span>
+            </div>
+          ) : (
+            contacts.map((c, index) => {
+              const posNumber = index + 1;
+              const rawTitle = c.position_name || FIXED_OFFICIAL_POSITIONS[index];
+              const cleanTitle = rawTitle.replace(/^\d+\.\s*/, "");
+              const displayTitle = `${posNumber}. ${cleanTitle}`;
+              const isConfigured = Boolean(c.name && c.name.trim().length > 0);
+
+              return (
+                <div
+                  key={c.id || `pos_${posNumber}`}
+                  className={`p-4 rounded-xl border transition-all ${
+                    isConfigured
+                      ? "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-blue-300 dark:hover:border-blue-800"
+                      : "border-dashed border-slate-300 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40"
+                  }`}
+                >
+                  {/* Card Title Bar */}
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100 dark:border-slate-800">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                      {displayTitle}
+                    </h3>
+
+                    <div className="flex items-center gap-2">
+                      {isConfigured ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                          <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                          <span>Configured</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
+                          <span>Pending Details</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Form Fields: 6 Fields */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {/* Exactly 4 Fields */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
                     {/* 1. Full Name */}
                     <div>
-                      <label htmlFor={`rep-${index}-name`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Full Name <span className="text-red-500">*</span>
+                      <label
+                        htmlFor={`pos-${index}-name`}
+                        className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"
+                      >
+                        <User className="w-3 h-3 text-slate-400" />
+                        <span>Full Name</span>
                       </label>
                       {isStateAdmin ? (
-                        <div id={`rep-${index}-name`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-900">
+                        <div
+                          id={`pos-${index}-name`}
+                          className="px-3 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white truncate"
+                        >
                           {c.name || "—"}
                         </div>
                       ) : (
                         <input
-                          id={`rep-${index}-name`}
+                          id={`pos-${index}-name`}
                           type="text"
-                          required
-                          value={c.name}
+                          value={c.name || ""}
                           onChange={(e) => handleFieldChange(index, "name", e.target.value)}
-                          placeholder="e.g. Sri A. K. Sharma"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                          placeholder="Enter Full Name"
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
                         />
                       )}
                     </div>
 
-                    {/* 2. Railway Designation */}
+                    {/* 2. BSG ID */}
                     <div>
-                      <label htmlFor={`rep-${index}-railway-desig`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Railway Designation <span className="text-red-500">*</span>
+                      <label
+                        htmlFor={`pos-${index}-bsg-id`}
+                        className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"
+                      >
+                        <Hash className="w-3 h-3 text-slate-400" />
+                        <span>BSG ID</span>
                       </label>
                       {isStateAdmin ? (
-                        <div id={`rep-${index}-railway-desig`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800">
-                          {c.railway_designation || "—"}
+                        <div
+                          id={`pos-${index}-bsg-id`}
+                          className="px-3 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white truncate"
+                        >
+                          {c.bsg_id || "—"}
                         </div>
                       ) : (
                         <input
-                          id={`rep-${index}-railway-desig`}
+                          id={`pos-${index}-bsg-id`}
                           type="text"
-                          required
-                          value={c.railway_designation || ""}
-                          onChange={(e) => handleFieldChange(index, "railway_designation", e.target.value)}
-                          placeholder="e.g. Senior Section Engineer (SSE)"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
-                        />
-                      )}
-                    </div>
-
-                    {/* 3. Scouting Rank */}
-                    <div>
-                      <label htmlFor={`rep-${index}-scouting-rank`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Scouting Rank <span className="text-red-500">*</span>
-                      </label>
-                      {isStateAdmin ? (
-                        <div id={`rep-${index}-scouting-rank`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800">
-                          {c.scouting_rank || c.designation || "—"}
-                        </div>
-                      ) : (
-                        <input
-                          id={`rep-${index}-scouting-rank`}
-                          type="text"
-                          required
-                          value={c.scouting_rank || c.designation || ""}
-                          onChange={(e) => handleFieldChange(index, "scouting_rank", e.target.value)}
-                          placeholder="e.g. District Commissioner (Scout)"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
-                        />
-                      )}
-                    </div>
-
-                    {/* 4. BSG ID */}
-                    <div>
-                      <label htmlFor={`rep-${index}-bsg-id`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        BSG ID <span className="text-red-500">*</span>
-                      </label>
-                      {isStateAdmin ? (
-                        <div id={`rep-${index}-bsg-id`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-mono font-medium text-slate-800">
-                          {c.bsg_id || c.bsg_uid || "—"}
-                        </div>
-                      ) : (
-                        <input
-                          id={`rep-${index}-bsg-id`}
-                          type="text"
-                          required
-                          value={c.bsg_id || c.bsg_uid || ""}
+                          value={c.bsg_id || ""}
                           onChange={(e) => handleFieldChange(index, "bsg_id", e.target.value)}
-                          placeholder="e.g. BSG-UID-ASN-101 or BSG12345"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono font-medium text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                          placeholder="e.g. BSG12345"
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
                         />
                       )}
                     </div>
 
-                    {/* 5. Mobile Number */}
+                    {/* 3. Mobile Number */}
                     <div>
-                      <label htmlFor={`rep-${index}-phone`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Mobile Number
+                      <label
+                        htmlFor={`pos-${index}-phone`}
+                        className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"
+                      >
+                        <Phone className="w-3 h-3 text-slate-400" />
+                        <span>Mobile Number</span>
                       </label>
                       {isStateAdmin ? (
-                        <div id={`rep-${index}-phone`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 font-mono">
+                        <div
+                          id={`pos-${index}-phone`}
+                          className="px-3 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-800 dark:text-slate-200 truncate"
+                        >
                           {c.phone || "—"}
                         </div>
                       ) : (
                         <input
-                          id={`rep-${index}-phone`}
+                          id={`pos-${index}-phone`}
                           type="tel"
                           value={c.phone || ""}
                           onChange={(e) => handleFieldChange(index, "phone", e.target.value)}
                           placeholder="e.g. +91 98765 43210"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
                         />
                       )}
                     </div>
 
-                    {/* 6. Email Address */}
+                    {/* 4. Email ID */}
                     <div>
-                      <label htmlFor={`rep-${index}-email`} className="block text-[11px] font-bold text-slate-700 mb-1">
-                        Email Address
+                      <label
+                        htmlFor={`pos-${index}-email`}
+                        className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1"
+                      >
+                        <Mail className="w-3 h-3 text-slate-400" />
+                        <span>Email ID</span>
                       </label>
                       {isStateAdmin ? (
-                        <div id={`rep-${index}-email`} className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 truncate">
+                        <div
+                          id={`pos-${index}-email`}
+                          className="px-3 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-800 dark:text-slate-200 truncate"
+                        >
                           {c.email || "—"}
                         </div>
                       ) : (
                         <input
-                          id={`rep-${index}-email`}
+                          id={`pos-${index}-email`}
                           type="email"
                           value={c.email || ""}
                           onChange={(e) => handleFieldChange(index, "email", e.target.value)}
-                          placeholder="contact@erbsg.org"
-                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none"
+                          placeholder="e.g. official@erbsg.org"
+                          className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition"
                         />
                       )}
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-
-          {!isStateAdmin && (
-            <div className="p-4 border-t border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs text-slate-500">
-                All changes to Authorized Representatives are isolated to your district and updated in real-time.
-              </span>
-
-              <div className="flex items-center gap-2 self-end sm:self-auto">
-                <button
-                  type="button"
-                  onClick={handleAddRepresentative}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold text-xs rounded-lg transition shadow-2xs cursor-pointer"
-                >
-                  <UserPlus className="w-4 h-4 text-blue-600" />
-                  <span>+ Add More</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saving || contacts.length === 0}
-                  className="flex items-center gap-2 px-6 py-2 bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer"
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Saving Personnel...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      <span>Save Official Contacts</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
+              );
+            })
           )}
         </div>
-      </div>
 
-      {/* Delete Confirmation Modal */}
-      {deleteIndex !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0 text-red-600">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-bold text-slate-900">
-                  Delete Authorized Representative
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Are you sure you want to delete{" "}
-                  <strong className="text-slate-900">
-                    {contacts[deleteIndex]?.name || `Authorized Representative #${deleteIndex + 1}`}
-                  </strong>
-                  ? This record will be permanently deleted from the database.
-                </p>
-              </div>
-            </div>
+        {/* Footer actions for District User */}
+        {!isStateAdmin && (
+          <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              All changes to the 17 official positions are isolated to {districtName} and securely saved in the ERBSG central records.
+            </span>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setDeleteIndex(null)}
-                disabled={saving}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition shadow-xs cursor-pointer"
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Confirm Delete</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button
+              type="button"
+              id="btn-save-official-contacts"
+              onClick={handleSave}
+              disabled={saving || loading}
+              className="flex items-center justify-center gap-2 px-6 py-2.5 bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-extrabold text-xs rounded-lg transition-all shadow-xs cursor-pointer self-end sm:self-auto"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Saving Personnel...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save Official Contacts</span>
+                </>
+              )}
+            </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

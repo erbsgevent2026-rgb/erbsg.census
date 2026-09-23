@@ -504,7 +504,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     console.error("Error resetting default password hashes for district users:", err);
   }
 
-  // --- Migration: Ensure official_contacts table has railway_designation, scouting_rank, and bsg_id ---
+  // --- Migration: Ensure official_contacts table has railway_designation, scouting_rank, bsg_id, position_order, position_name ---
   try {
     const tableInfo = db.exec("PRAGMA table_info(official_contacts)");
     const cols = tableInfo[0]?.values?.map((v: any) => v[1]) || [];
@@ -517,6 +517,12 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     if (!cols.includes("bsg_id")) {
       db.run("ALTER TABLE official_contacts ADD COLUMN bsg_id TEXT DEFAULT ''");
     }
+    if (!cols.includes("position_order")) {
+      db.run("ALTER TABLE official_contacts ADD COLUMN position_order INTEGER DEFAULT 0");
+    }
+    if (!cols.includes("position_name")) {
+      db.run("ALTER TABLE official_contacts ADD COLUMN position_name TEXT DEFAULT ''");
+    }
 
     // Populate scouting_rank from designation if empty
     db.run("UPDATE official_contacts SET scouting_rank = designation WHERE (scouting_rank IS NULL OR scouting_rank = '') AND designation IS NOT NULL AND designation != ''");
@@ -524,80 +530,69 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     // Populate bsg_id from bsg_uid if empty
     db.run("UPDATE official_contacts SET bsg_id = bsg_uid WHERE (bsg_id IS NULL OR bsg_id = '') AND bsg_uid IS NOT NULL AND bsg_uid != ''");
 
-    // Provide realistic railway designation defaults for existing records if empty
+    // Map known designations to the 17 standard position names & orders
     db.run(`
       UPDATE official_contacts
-      SET railway_designation = CASE
-        WHEN designation LIKE '%Scout Commissioner%' OR designation LIKE '%Commissioner (Scout)%' THEN 'Senior Section Engineer (SSE)'
-        WHEN designation LIKE '%Guide Commissioner%' OR designation LIKE '%Commissioner (Guide)%' THEN 'Senior Divisional Commercial Manager (Sr.DCM)'
-        WHEN designation LIKE '%Secretary%' THEN 'Chief Office Superintendent (Ch.OS)'
-        WHEN designation LIKE '%Treasurer%' THEN 'Senior Divisional Accounts Officer (Sr.DFM)'
-        ELSE 'Senior Section Engineer (SSE)'
-      END
-      WHERE (railway_designation IS NULL OR railway_designation = '')
+      SET position_order = 3, position_name = 'District Secretary'
+      WHERE (position_order = 0 OR position_order IS NULL) AND designation LIKE '%Secretary%' AND designation NOT LIKE '%Jt%' AND designation NOT LIKE '%Asstt%'
+    `);
+    db.run(`
+      UPDATE official_contacts
+      SET position_order = 4, position_name = 'District Commissioner (S)'
+      WHERE (position_order = 0 OR position_order IS NULL) AND (designation LIKE '%Commissioner (Scout)%' OR designation LIKE '%Commissioner (S)%')
+    `);
+    db.run(`
+      UPDATE official_contacts
+      SET position_order = 5, position_name = 'District Commissioner (G)'
+      WHERE (position_order = 0 OR position_order IS NULL) AND (designation LIKE '%Guide Commissioner%' OR designation LIKE '%Commissioner (G)%')
     `);
   } catch (err) {
     console.error("Error migrating official_contacts table columns:", err);
   }
 
-  // --- Migration: Ensure 2 initial Authorized Representatives for all 9 Districts ---
+  // --- Migration: Ensure 17 Official Positions for all 9 Districts ---
   try {
-    const defaultOfficials: Record<string, Array<{ name: string; desig: string; uid: string; email: string; phone: string; railway_desig?: string }>> = {
-      dist_asn: [
-        { name: "Shri R. K. Mukherjee", desig: "District Commissioner (Scout)", uid: "BSG-UID-ASN-101", email: "dc.scout.asn@erbsg.org", phone: "+91 98300 11004", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Anita Das", desig: "District Secretary", uid: "BSG-UID-ASN-102", email: "sec.asn@erbsg.org", phone: "+91 98300 11005", railway_desig: "Chief Office Superintendent (Ch.OS)" },
-      ],
-      dist_cen: [
-        { name: "Shri Rajeshwar Verma", desig: "District Commissioner (Scout)", uid: "BSG-UID-CEN-101", email: "dc.scout.cen@erbsg.org", phone: "+91 98311 55661", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Swati Bose", desig: "District Secretary", uid: "BSG-UID-CEN-102", email: "sec.cen@erbsg.org", phone: "+91 98311 55662", railway_desig: "Chief Office Superintendent (Ch.OS)" },
-      ],
-      dist_clw: [
-        { name: "Shri S. C. Mondal", desig: "District Commissioner (Scout)", uid: "BSG-UID-CLW-101", email: "dc.scout.clw@erbsg.org", phone: "+91 98300 11006", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Rina Ghosh", desig: "District Secretary", uid: "BSG-UID-CLW-102", email: "sec.clw@erbsg.org", phone: "+91 98300 11007", railway_desig: "Chief Office Superintendent (Ch.OS)" },
-      ],
-      dist_hwh: [
-        { name: "Shri B. K. Roy", desig: "District Commissioner (Scout)", uid: "BSG-UID-HWH-101", email: "dc.scout.hwh@erbsg.org", phone: "+91 98300 11008", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Mousumi Sen", desig: "District Guide Commissioner", uid: "BSG-UID-HWH-102", email: "dgc.hwh@erbsg.org", phone: "+91 98300 11009", railway_desig: "Senior Divisional Commercial Manager (Sr.DCM)" },
-      ],
-      dist_jmp: [
-        { name: "Shri Manoj Kumar", desig: "District Commissioner (Scout)", uid: "BSG-UID-JMP-101", email: "dc.scout.jmp@erbsg.org", phone: "+91 98300 11010", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Sunita Kumari", desig: "District Secretary", uid: "BSG-UID-JMP-102", email: "sec.jmp@erbsg.org", phone: "+91 98300 11011", railway_desig: "Chief Office Superintendent (Ch.OS)" },
-      ],
-      dist_kpa: [
-        { name: "Shri P. K. Banerjee", desig: "District Commissioner (Scout)", uid: "BSG-UID-KPA-101", email: "dc.scout.kpa@erbsg.org", phone: "+91 98300 11012", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Tanushree Dey", desig: "District Guide Commissioner", uid: "BSG-UID-KPA-102", email: "dgc.kpa@erbsg.org", phone: "+91 98300 11013", railway_desig: "Senior Divisional Commercial Manager (Sr.DCM)" },
-      ],
-      dist_llh: [
-        { name: "Shri Subhasish Roy", desig: "District Commissioner (Scout)", uid: "BSG-UID-LLH-301", email: "dc.scout.llh@erbsg.org", phone: "+91 98333 44551", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Manidipa Das", desig: "District Guide Commissioner", uid: "BSG-UID-LLH-302", email: "dgc.llh@erbsg.org", phone: "+91 98333 44552", railway_desig: "Senior Divisional Commercial Manager (Sr.DCM)" },
-      ],
-      dist_mldt: [
-        { name: "Shri A. K. Choudhury", desig: "District Commissioner (Scout)", uid: "BSG-UID-MLDT-101", email: "dc.scout.mldt@erbsg.org", phone: "+91 98300 11014", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Kalyani Saha", desig: "District Secretary", uid: "BSG-UID-MLDT-102", email: "sec.mldt@erbsg.org", phone: "+91 98300 11015", railway_desig: "Chief Office Superintendent (Ch.OS)" },
-      ],
-      dist_sdah: [
-        { name: "Shri Amitava Sen", desig: "District Commissioner (Scout)", uid: "BSG-UID-SDAH-201", email: "dc.scout.sdah@erbsg.org", phone: "+91 98322 77881", railway_desig: "Senior Section Engineer (SSE)" },
-        { name: "Smt. Papiya Sengupta", desig: "District Guide Commissioner", uid: "BSG-UID-SDAH-202", email: "dgc.sdah@erbsg.org", phone: "+91 98322 77882", railway_desig: "Senior Divisional Commercial Manager (Sr.DCM)" },
-      ],
-    };
+    const FIXED_17_POSITIONS = [
+      "President",
+      "District Chief Commissioner",
+      "District Secretary",
+      "District Commissioner (S)",
+      "District Commissioner (G)",
+      "District Organising Commissioner (Scouts)",
+      "District Organising Commissioner (Guides)",
+      "District Training Commissioner of Scouts",
+      "District Training Commissioner of Guides",
+      "District Youth Committee Chairman",
+      "District Media Co-ordinator",
+      "Jt. District Secretary",
+      "Asstt. District Secretary",
+      "District Treasurer",
+      "Nodal Officer of Aapdamitra",
+      "Co-chairman of Youth Committee",
+      "Growth Coordinator"
+    ];
 
-    for (const [distId, reps] of Object.entries(defaultOfficials)) {
-      const checkReps = db.exec(`SELECT count(*) FROM official_contacts WHERE district_id = '${distId}'`);
-      const count = Number(checkReps[0]?.values[0]?.[0] || 0);
-      if (count === 0) {
-        reps.forEach((r, idx) => {
-          const ocId = `oc_${distId}_${idx + 1}`;
-          const railwayDesig = r.railway_desig || "Senior Section Engineer (SSE)";
+    const allDists = ["dist_asn", "dist_cen", "dist_clw", "dist_hwh", "dist_jmp", "dist_kpa", "dist_llh", "dist_mldt", "dist_sdah"];
+    for (const distId of allDists) {
+      const existingReps = db.exec(`SELECT position_order, position_name, name FROM official_contacts WHERE district_id = '${distId}' AND year_id = 'year_2026_2027'`);
+      const existingRows = existingReps[0]?.values || [];
+      const hasRows = existingRows.length > 0;
+
+      if (!hasRows) {
+        // Seed full initial set of 17 positions for this district
+        FIXED_17_POSITIONS.forEach((posName, idx) => {
+          const posOrder = idx + 1;
+          const ocId = `oc_${distId}_year_2026_2027_pos_${posOrder}`;
           db.run(
-            `INSERT INTO official_contacts (id, state_id, district_id, year_id, name, railway_designation, scouting_rank, bsg_id, designation, bsg_uid, email, phone, is_selected)
-             VALUES (?, 'state_er', ?, 'year_2026_2027', ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [ocId, distId, r.name, railwayDesig, r.desig, r.uid, r.desig, r.uid, r.email, r.phone]
+            `INSERT INTO official_contacts (id, state_id, district_id, year_id, position_order, position_name, name, bsg_id, bsg_uid, designation, scouting_rank, email, phone, is_selected)
+             VALUES (?, 'state_er', ?, 'year_2026_2027', ?, ?, '', '', '', ?, ?, '', '', 1)`,
+            [ocId, distId, posOrder, posName, posName, posName]
           );
         });
       }
     }
   } catch (err) {
-    console.error("Error seeding initial authorized representatives:", err);
+    console.error("Error seeding initial 17 official positions:", err);
   }
 
   // Ensure member counts exist for Liluah District across active academic year

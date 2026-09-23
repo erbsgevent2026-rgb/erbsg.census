@@ -1206,16 +1206,38 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
 // 6. OFFICIAL CONTACT PERSONS
 // -------------------------------------------------------------
 
+const FIXED_OFFICIAL_POSITIONS = [
+  "President",
+  "District Chief Commissioner",
+  "District Secretary",
+  "District Commissioner (S)",
+  "District Commissioner (G)",
+  "District Organising Commissioner (Scouts)",
+  "District Organising Commissioner (Guides)",
+  "District Training Commissioner of Scouts",
+  "District Training Commissioner of Guides",
+  "District Youth Committee Chairman",
+  "District Media Co-ordinator",
+  "Jt. District Secretary",
+  "Asstt. District Secretary",
+  "District Treasurer",
+  "Nodal Officer of Aapdamitra",
+  "Co-chairman of Youth Committee",
+  "Growth Coordinator"
+];
+
 apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
-  const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_cen") : user.district_id!;
+  const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_asn") : user.district_id!;
   const yearId = String(req.query.year_id || "year_2026_2027");
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 
-  const contacts = queryAll<any>(
+  const existing = queryAll<any>(
     `SELECT 
        id, state_id, district_id, year_id, name,
+       COALESCE(position_order, 0) as position_order,
+       COALESCE(position_name, '') as position_name,
        COALESCE(railway_designation, '') as railway_designation,
        COALESCE(scouting_rank, designation, '') as scouting_rank,
        COALESCE(bsg_id, bsg_uid, '') as bsg_id,
@@ -1223,11 +1245,38 @@ apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Respo
        COALESCE(bsg_uid, bsg_id, '') as bsg_uid,
        email, phone, is_selected, created_at
      FROM official_contacts 
-     WHERE district_id = ? AND year_id = ? 
-     ORDER BY created_at ASC, name ASC`,
+     WHERE district_id = ? AND year_id = ?`,
     [targetDistrictId, yearId]
   );
-  res.json(contacts);
+
+  // Return the fixed list of 17 positions in order, mapped with latest saved details
+  const results = FIXED_OFFICIAL_POSITIONS.map((posName, idx) => {
+    const posOrder = idx + 1;
+    const match = existing.find(e =>
+      e.position_order === posOrder ||
+      (e.position_name && e.position_name.trim().toLowerCase() === posName.trim().toLowerCase()) ||
+      (posName === "District Secretary" && e.scouting_rank?.toLowerCase().includes("secretary") && !e.scouting_rank?.toLowerCase().includes("jt") && !e.scouting_rank?.toLowerCase().includes("asstt")) ||
+      (posName === "District Commissioner (S)" && (e.scouting_rank?.toLowerCase().includes("commissioner (scout") || e.scouting_rank?.toLowerCase().includes("commissioner (s)"))) ||
+      (posName === "District Commissioner (G)" && (e.scouting_rank?.toLowerCase().includes("guide commissioner") || e.scouting_rank?.toLowerCase().includes("commissioner (g)")))
+    );
+
+    return {
+      id: match ? match.id : `oc_${targetDistrictId}_${yearId}_pos_${posOrder}`,
+      state_id: "state_er",
+      district_id: targetDistrictId,
+      year_id: yearId,
+      position_order: posOrder,
+      position_name: posName,
+      name: match ? (match.name || "") : "",
+      bsg_id: match ? (match.bsg_id || match.bsg_uid || "") : "",
+      phone: match ? (match.phone || "") : "",
+      email: match ? (match.email || "") : "",
+      is_selected: 1,
+      created_at: match?.created_at || new Date().toISOString()
+    };
+  });
+
+  res.json(results);
 });
 
 apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Response) => {
@@ -1235,42 +1284,40 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
   const { district_id, year_id, contacts } = req.body;
 
   if (user.role === "STATE_ADMIN") {
-    res.status(403).json({ error: "State Administrator has view-only access to Authorized Representatives." });
+    res.status(403).json({ error: "State Administrator has view-only access to Official Contact Persons." });
     return;
   }
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
   if (!Array.isArray(contacts)) {
-    res.status(400).json({ error: "Contacts must be an array." });
+    res.status(400).json({ error: "Contacts must be an array of positions." });
     return;
   }
 
-  // Clear existing and re-insert official contacts for this district and session
+  // Clear existing and re-insert the 17 official positions for this district and session
   runQuery("DELETE FROM official_contacts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
 
-  for (let i = 0; i < contacts.length; i++) {
-    const c = contacts[i];
-    const id = c.id && !c.id.startsWith("temp_")
-      ? c.id
-      : `oc_${district_id}_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`;
-    
+  for (let i = 0; i < FIXED_OFFICIAL_POSITIONS.length; i++) {
+    const posName = FIXED_OFFICIAL_POSITIONS[i];
+    const posOrder = i + 1;
+    const c = contacts.find((item: any) => item.position_order === posOrder || item.position_name === posName) || contacts[i] || {};
+
+    const id = `oc_${district_id}_${year_id}_pos_${posOrder}`;
     const name = (c.name || "").trim();
-    const railwayDesig = (c.railway_designation || "").trim();
-    const scoutingRank = (c.scouting_rank || c.designation || "").trim();
     const bsgId = (c.bsg_id || c.bsg_uid || "").trim();
-    const email = c.email ? c.email.trim() : null;
-    const phone = c.phone ? c.phone.trim() : null;
+    const phone = (c.phone || "").trim();
+    const email = (c.email || "").trim();
 
     runQuery(
       `INSERT INTO official_contacts (
-        id, state_id, district_id, year_id, name,
-        railway_designation, scouting_rank, bsg_id, designation, bsg_uid,
+        id, state_id, district_id, year_id, position_order, position_name,
+        name, bsg_id, bsg_uid, designation, scouting_rank,
         email, phone, is_selected
-      ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
-        id, district_id, year_id, name,
-        railwayDesig, scoutingRank, bsgId, scoutingRank, bsgId,
+        id, district_id, year_id, posOrder, posName,
+        name, bsgId, bsgId, posName, posName,
         email, phone
       ]
     );
@@ -1280,12 +1327,12 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
       state_id: "state_er",
       district_id,
       year_id,
+      position_order: posOrder,
+      position_name: posName,
       name,
-      railway_designation: railwayDesig,
-      scouting_rank: scoutingRank,
       bsg_id: bsgId,
-      email,
       phone,
+      email,
       is_selected: 1,
       updated_at: new Date().toISOString()
     });
@@ -1301,49 +1348,16 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
     action: "UPDATE_OFFICIAL_CONTACTS",
     module: "OFFICIAL_CONTACTS",
     districtId: district_id,
-    details: `Updated Authorized Representatives (${contacts.length} saved) for ${year_id}`,
+    details: `Updated Official Contact Persons (17 positions saved) for ${year_id}`,
     ipAddress: req.ip
   });
 
   broadcastSyncEvent("CONTACTS_UPDATED", { districtId: district_id, yearId: year_id });
-  res.json({ message: "Authorized Representatives saved successfully." });
+  res.json({ message: "Official Contact Person details saved successfully." });
 });
 
 apiRouter.delete("/official-contacts/:id", authenticateToken, (req: Request, res: Response) => {
-  const user = req.user!;
-  if (user.role === "STATE_ADMIN") {
-    res.status(403).json({ error: "State Administrator has view-only access to Authorized Representatives." });
-    return;
-  }
-
-  const { id } = req.params;
-  const existing = queryOne<any>("SELECT * FROM official_contacts WHERE id = ?", [id]);
-  if (!existing) {
-    res.status(404).json({ error: "Authorized Representative record not found." });
-    return;
-  }
-
-  if (!enforceDistrictAccess(req, res, existing.district_id)) return;
-
-  runQuery("DELETE FROM official_contacts WHERE id = ?", [id]);
-  runQuery("DELETE FROM district_members WHERE id = ? OR id = ?", [id, `dm_${id}`]);
-  saveDatabase();
-  syncEntityToFirestore("official_contacts", id, "DELETE");
-
-  logAuditAction({
-    userId: user.id,
-    userName: user.name,
-    bsgId: user.bsg_id,
-    role: user.role,
-    action: "DELETE_OFFICIAL_CONTACT",
-    module: "OFFICIAL_CONTACTS",
-    districtId: existing.district_id,
-    details: `Deleted Authorized Representative: ${existing.name || existing.id}`,
-    ipAddress: req.ip
-  });
-
-  broadcastSyncEvent("CONTACTS_UPDATED", { districtId: existing.district_id, yearId: existing.year_id });
-  res.json({ message: "Authorized Representative deleted successfully." });
+  res.status(403).json({ error: "Fixed 17 Official Positions cannot be deleted." });
 });
 
 // -------------------------------------------------------------

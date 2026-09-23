@@ -1,5 +1,27 @@
 export type UserRole = "STATE_ADMIN" | "DISTRICT_USER";
 
+export const FIXED_OFFICIAL_POSITIONS = [
+  "President",
+  "District Chief Commissioner",
+  "District Secretary",
+  "District Commissioner (S)",
+  "District Commissioner (G)",
+  "District Organising Commissioner (Scouts)",
+  "District Organising Commissioner (Guides)",
+  "District Training Commissioner of Scouts",
+  "District Training Commissioner of Guides",
+  "District Youth Committee Chairman",
+  "District Media Co-ordinator",
+  "Jt. District Secretary",
+  "Asstt. District Secretary",
+  "District Treasurer",
+  "Nodal Officer of Aapdamitra",
+  "Co-chairman of Youth Committee",
+  "Growth Coordinator"
+] as const;
+
+export type OfficialPositionName = (typeof FIXED_OFFICIAL_POSITIONS)[number];
+
 export interface User {
   id: string;
   bsgId: string;
@@ -77,6 +99,8 @@ export interface OfficialContact {
   state_id: string;
   district_id: string;
   year_id: string;
+  position_order?: number;
+  position_name?: string;
   name: string;
   railway_designation?: string;
   scouting_rank?: string;
