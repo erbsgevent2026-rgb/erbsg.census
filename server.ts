@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { getDb, ensureCurrentFinancialYear } from "./server/db.js";
@@ -6,6 +7,7 @@ import { apiRouter } from "./server/routes.js";
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const PORT = 3000;
 
   // Support up to 25MB JSON payload for document PDFs and logo images
@@ -42,12 +44,30 @@ async function startServer() {
   // Mount primary API router
   app.use("/api", apiRouter);
 
+  // Return clean JSON 404 for any unmatched /api route rather than falling through to Vite SPA html
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route ${req.method} ${req.path} not found` });
+  });
+
   // Vite middleware setup
   if (process.env.NODE_ENV !== "production") {
+    if (process.env.APPLET_ID || process.env.GOOGLE_RUNTIME) {
+      if (process.env.DISABLE_HMR === undefined) {
+        process.env.DISABLE_HMR = "true";
+      }
+    }
+    const isHmrDisabled = process.env.DISABLE_HMR === "true";
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: false,
+        hmr: isHmrDisabled
+          ? false
+          : {
+              server: httpServer,
+              port: 3000,
+              clientPort: 3000,
+            },
+        ws: isHmrDisabled ? false : undefined,
       },
       appType: "spa",
     });
@@ -60,7 +80,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`ERBSG Portal Server running at http://0.0.0.0:${PORT}`);
   });
 }

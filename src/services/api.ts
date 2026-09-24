@@ -3,6 +3,7 @@ import {
   District,
   AcademicYear,
   MemberCounts,
+  UnitDetails,
   OfficialContact,
   StatutoryDocument,
   OfficialMember,
@@ -37,25 +38,55 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`/api${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const isGetOrSafe = !options.method || options.method.toUpperCase() === "GET";
+  const maxAttempts = isGetOrSafe ? 3 : 1;
+  let lastError: any = null;
 
-  const data = await response.json().catch(() => ({}));
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(`/api${endpoint}`, {
+        ...options,
+        headers,
+      });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      // Session expired or invalid
-      if (token) {
-        clearStoredToken();
-        window.dispatchEvent(new CustomEvent("erbsg_auth_expired"));
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/html")) {
+        throw new Error(`API endpoint /api${endpoint} returned HTML instead of JSON`);
       }
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Session expired or invalid
+          if (token) {
+            clearStoredToken();
+            window.dispatchEvent(new CustomEvent("erbsg_auth_expired"));
+          }
+        }
+        throw new Error(data.error || `Request failed with status ${response.status}`);
+      }
+
+      return data as T;
+    } catch (err: any) {
+      lastError = err;
+      // Do not retry 4xx errors, or non-GET mutations unless network failure
+      const isNetworkError =
+        err?.name === "TypeError" ||
+        err?.message?.includes("Failed to fetch") ||
+        err?.message?.includes("NetworkError") ||
+        err?.message?.includes("Load failed");
+
+      if (!isNetworkError || attempt === maxAttempts) {
+        throw err;
+      }
+
+      // Exponential backoff before retry (250ms, 600ms)
+      await new Promise((resolve) => setTimeout(resolve, attempt * 250));
     }
-    throw new Error(data.error || `Request failed with status ${response.status}`);
   }
 
-  return data as T;
+  throw lastError;
 }
 
 export const api = {
@@ -121,6 +152,15 @@ export const api = {
       body: JSON.stringify({ district_id: districtId, year_id: yearId, categories })
     }),
 
+  // Unit Details
+  getUnitDetails: (districtId: string, yearId: string) =>
+    request<{ data: UnitDetails }>(`/unit-details?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
+  saveUnitDetails: (districtId: string, yearId: string, units: Partial<UnitDetails>) =>
+    request<{ message: string }>("/unit-details", {
+      method: "PUT",
+      body: JSON.stringify({ district_id: districtId, year_id: yearId, units })
+    }),
+
   // Official Contacts
   getOfficialContacts: (districtId: string, yearId: string) =>
     request<OfficialContact[]>(`/official-contacts?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
@@ -128,6 +168,11 @@ export const api = {
     request<{ message: string }>("/official-contacts", {
       method: "POST",
       body: JSON.stringify({ district_id: districtId, year_id: yearId, contacts })
+    }),
+  saveSingleOfficialContact: (districtId: string, yearId: string, contact: any) =>
+    request<{ message: string }>("/official-contacts", {
+      method: "POST",
+      body: JSON.stringify({ district_id: districtId, year_id: yearId, contact })
     }),
   deleteOfficialContact: (id: string, districtId?: string) =>
     request<{ message: string }>(`/official-contacts/${encodeURIComponent(id)}${districtId ? `?district_id=${encodeURIComponent(districtId)}` : ""}`, {

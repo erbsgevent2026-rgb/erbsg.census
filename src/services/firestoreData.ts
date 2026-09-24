@@ -11,7 +11,7 @@ import {
   where,
   serverTimestamp
 } from "firebase/firestore";
-import { District, MemberCounts, User } from "../types";
+import { District, MemberCounts, UnitDetails, User } from "../types";
 import { logDatabaseOperation, sanitizeForFirestore } from "./firestoreAudit";
 
 /**
@@ -106,6 +106,70 @@ export async function getMemberCountsFirestore(
     return null;
   } catch (err) {
     console.warn("Could not read member counts from Firestore:", err);
+    return null;
+  }
+}
+
+/**
+ * Save Unit Details with Firestore persistence and automated audit log interception
+ */
+export async function saveUnitDetailsFirestore(
+  districtId: string,
+  yearId: string,
+  data: UnitDetails,
+  currentUser: User | null
+): Promise<void> {
+  const docId = `ud_${districtId}_${yearId}`;
+  const docRef = doc(db, "unit_details", docId);
+
+  const existingSnap = await getDoc(docRef);
+  const isCreate = !existingSnap.exists();
+  const previousData = existingSnap.exists() ? existingSnap.data() : null;
+
+  const payload = sanitizeForFirestore({
+    ...data,
+    district_id: districtId,
+    year_id: yearId,
+    updated_by: currentUser?.name || data.updated_by || "System",
+    updated_at: new Date().toISOString(),
+    firestoreTimestamp: serverTimestamp()
+  });
+
+  await setDoc(docRef, payload, { merge: true });
+
+  await logDatabaseOperation({
+    userId: currentUser?.id,
+    userName: currentUser?.name,
+    bsgId: currentUser?.bsgId,
+    role: currentUser?.role,
+    action: isCreate ? "CREATE" : "UPDATE",
+    module: "MEMBERS",
+    targetEntity: "unit_details",
+    targetId: docId,
+    districtId: districtId,
+    details: `${isCreate ? "Created" : "Updated"} Unit Details for ${yearId}`,
+    payloadBefore: previousData,
+    payloadAfter: payload,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
+ * Read Unit Details from Firestore
+ */
+export async function getUnitDetailsFirestore(
+  districtId: string,
+  yearId: string
+): Promise<UnitDetails | null> {
+  try {
+    const docId = `ud_${districtId}_${yearId}`;
+    const snap = await getDoc(doc(db, "unit_details", docId));
+    if (snap.exists()) {
+      return snap.data() as UnitDetails;
+    }
+    return null;
+  } catch (err) {
+    console.warn("Could not read unit details from Firestore:", err);
     return null;
   }
 }

@@ -13,15 +13,22 @@
     <script>
       // Cleanly handle Vite HMR websocket disconnection in iframe preview environment
       window.addEventListener('unhandledrejection', function (event) {
-        var msg = event.reason && (event.reason.message || String(event.reason));
-        if (msg && typeof msg === 'string' && msg.indexOf('WebSocket') !== -1) {
+        var reason = event.reason;
+        var msg = reason && (reason.message || String(reason));
+        if (msg && typeof msg === 'string' && (msg.indexOf('WebSocket') !== -1 || msg.indexOf('vite') !== -1)) {
           event.preventDefault();
+          if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
+          }
         }
       });
       window.addEventListener('error', function (event) {
         var msg = event.message || '';
-        if (msg && typeof msg === 'string' && msg.indexOf('WebSocket') !== -1) {
+        if (msg && typeof msg === 'string' && (msg.indexOf('WebSocket') !== -1 || msg.indexOf('vite') !== -1)) {
           event.preventDefault();
+          if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
+          }
         }
       });
     </script>

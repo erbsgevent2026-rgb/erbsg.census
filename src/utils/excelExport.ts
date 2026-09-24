@@ -85,44 +85,44 @@ export function exportMembersToExcel(
 ) {
   const formatted = [
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Bulbuls",
       "REGISTERED COUNT": members.bulbul || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Guides",
       "REGISTERED COUNT": members.guide || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Rangers",
       "REGISTERED COUNT": members.ranger || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Cubs",
       "REGISTERED COUNT": members.cub || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Scouts",
       "REGISTERED COUNT": members.scout || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "1. YOUTH SECTION",
+      "CENSUS CATEGORY": "1. YOUTH MEMBERS",
       "BSG WING / SUB-CLASSIFICATION": "Rovers",
       "REGISTERED COUNT": members.rover || 0,
       "STATUS": "ACTIVE"
     },
     {
       "CENSUS CATEGORY": "=== SUB-TOTAL ===",
-      "BSG WING / SUB-CLASSIFICATION": "YOUTH SECTION TOTAL",
+      "BSG WING / SUB-CLASSIFICATION": "YOUTH MEMBERS TOTAL",
       "REGISTERED COUNT": members.youth_total || 0,
       "STATUS": "VERIFIED"
     },
@@ -171,32 +171,32 @@ export function exportMembersToExcel(
     },
 
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS & SUPPORT STAFF",
+      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
       "BSG WING / SUB-CLASSIFICATION": "Professional Guides",
       "REGISTERED COUNT": members.professional_guides || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS & SUPPORT STAFF",
+      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
       "BSG WING / SUB-CLASSIFICATION": "Voluntary Commissioners",
       "REGISTERED COUNT": members.voluntary_commissioners || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS & SUPPORT STAFF",
+      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
       "BSG WING / SUB-CLASSIFICATION": "Support Staff",
       "REGISTERED COUNT": members.support_staff || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS & SUPPORT STAFF",
+      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
       "BSG WING / SUB-CLASSIFICATION": "Professionals / Staff",
       "REGISTERED COUNT": members.professionals_staff || 0,
       "STATUS": "ACTIVE"
     },
     {
       "CENSUS CATEGORY": "=== SUB-TOTAL ===",
-      "BSG WING / SUB-CLASSIFICATION": "PROFESSIONALS & SUPPORT STAFF TOTAL",
+      "BSG WING / SUB-CLASSIFICATION": "PROFESSIONALS/STAFF TOTAL",
       "REGISTERED COUNT": members.professionals_total || 0,
       "STATUS": "VERIFIED"
     },

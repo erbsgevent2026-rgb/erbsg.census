@@ -91,6 +91,26 @@
         "updated_at": { "type": "string" }
       },
       "required": ["id", "district_id", "name"]
+    },
+    "unit_details": {
+      "title": "Unit Details",
+      "description": "District unit counts by category (Bulbul Flock, Guide Company, Ranger Team, Cub Pack, Scout Troop, Rover Crew)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "state_id": { "type": "string" },
+        "district_id": { "type": "string" },
+        "year_id": { "type": "string" },
+        "bulbul_flock": { "type": "number" },
+        "guide_company": { "type": "number" },
+        "ranger_team": { "type": "number" },
+        "cub_pack": { "type": "number" },
+        "scout_troop": { "type": "number" },
+        "rover_crew": { "type": "number" },
+        "updated_by": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["district_id", "year_id"]
     }
   },
   "firestore": {
@@ -109,6 +129,10 @@
     "/official_contacts/{contactId}": {
       "schema": "official_contacts",
       "description": "Authorized Representatives for Scout & Guide districts"
+    },
+    "/unit_details/{unitId}": {
+      "schema": "unit_details",
+      "description": "Registered unit details and counts per district and year"
     }
   }
 }

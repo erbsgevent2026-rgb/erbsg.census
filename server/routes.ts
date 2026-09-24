@@ -878,7 +878,7 @@ apiRouter.post("/district-users/:id/toggle-status", authenticateToken, requireSt
 // 4. DASHBOARD & ANALYTICS
 // -------------------------------------------------------------
 
-apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Response) => {
+const handleDashboardStats = (req: Request, res: Response) => {
   const user = req.user!;
   const yearId = String(req.query.year_id || "year_2026_2027");
 
@@ -902,7 +902,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
     const arCount = queryOne<any>("SELECT count(*) as total FROM annual_reports WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
     const crCount = queryOne<any>("SELECT count(*) as total FROM census_reports WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
     const asCount = queryOne<any>("SELECT count(*) as total FROM audited_statements WHERE state_id = 'state_er' AND year_id = ?", [yearId]);
-    const ocCount = queryOne<any>("SELECT count(DISTINCT district_id) as total FROM official_contacts WHERE state_id = 'state_er' AND year_id = ? AND is_selected = 1", [yearId]);
+    const ocCount = queryOne<any>("SELECT count(DISTINCT district_id) as total FROM official_contacts WHERE state_id = 'state_er' AND year_id = ? AND is_selected = 1 AND name IS NOT NULL AND TRIM(name) != ''", [yearId]);
 
     // District-wise submission breakdown
     const districtBreakdown = queryAll<any>(`
@@ -932,7 +932,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
       LEFT JOIN (SELECT DISTINCT district_id FROM annual_reports WHERE year_id = ?) ar ON d.id = ar.district_id
       LEFT JOIN (SELECT DISTINCT district_id FROM census_reports WHERE year_id = ?) cr ON d.id = cr.district_id
       LEFT JOIN (SELECT DISTINCT district_id FROM audited_statements WHERE year_id = ?) ast ON d.id = ast.district_id
-      LEFT JOIN (SELECT DISTINCT district_id FROM official_contacts WHERE year_id = ? AND is_selected = 1) oc ON d.id = oc.district_id
+      LEFT JOIN (SELECT DISTINCT district_id FROM official_contacts WHERE year_id = ? AND is_selected = 1 AND name IS NOT NULL AND TRIM(name) != '') oc ON d.id = oc.district_id
       WHERE d.state_id = 'state_er'
       GROUP BY d.id
       ORDER BY d.name ASC
@@ -1022,7 +1022,7 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
     const hasAr = queryOne<any>("SELECT id, file_name FROM annual_reports WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
     const hasCr = queryOne<any>("SELECT id, file_name FROM census_reports WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
     const hasAs = queryOne<any>("SELECT id, file_name FROM audited_statements WHERE district_id = ? AND year_id = ?", [districtId, yearId]);
-    const contacts = queryAll<any>("SELECT * FROM official_contacts WHERE district_id = ? AND year_id = ? AND is_selected = 1", [districtId, yearId]);
+    const contacts = queryAll<any>("SELECT * FROM official_contacts WHERE district_id = ? AND year_id = ? AND is_selected = 1 AND name IS NOT NULL AND TRIM(name) != ''", [districtId, yearId]);
 
     // Multi-year Member Growth Statistics (District level) calculated dynamically from database
     const allYears = queryAll<any>("SELECT id, label, is_current FROM academic_years ORDER BY label ASC");
@@ -1116,7 +1116,10 @@ apiRouter.get("/dashboard/stats", authenticateToken, (req: Request, res: Respons
       growthStatistics
     });
   }
-});
+};
+
+apiRouter.get("/dashboard/stats", authenticateToken, handleDashboardStats);
+apiRouter.get("/dashboard/summary", authenticateToken, handleDashboardStats);
 
 // -------------------------------------------------------------
 // 5. MEMBERS & CENSUS
@@ -1182,7 +1185,7 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  const c = categories || {};
+  const c = categories || req.body || {};
 
   // Numeric parsing
   const bunnies = 0;
@@ -1276,6 +1279,102 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
   });
 });
 
+apiRouter.get("/unit-details", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_cen") : user.district_id!;
+  const yearId = String(req.query.year_id || "year_2026_2027");
+
+  if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
+
+  const data = queryOne<any>(
+    "SELECT * FROM unit_details WHERE district_id = ? AND year_id = ?",
+    [targetDistrictId, yearId]
+  );
+
+  const safeData = data ? { ...data } : {
+    district_id: targetDistrictId,
+    year_id: yearId,
+    bulbul_flock: 0,
+    guide_company: 0,
+    ranger_team: 0,
+    cub_pack: 0,
+    scout_troop: 0,
+    rover_crew: 0,
+    updated_by: null,
+    updated_at: null
+  };
+
+  res.json({ data: safeData });
+});
+
+apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { district_id, year_id, units } = req.body;
+
+  // Enforce view-only access for State Admin at the API level
+  if (user.role === "STATE_ADMIN") {
+    res.status(403).json({
+      error: "Access Denied: State Administrator has view-only access to Unit Details. Only authorized District Users may update unit details for their division."
+    });
+    return;
+  }
+
+  if (!enforceDistrictAccess(req, res, district_id)) return;
+
+  const u = units || req.body || {};
+  const bulbul_flock = Math.max(0, parseInt(u.bulbul_flock || 0));
+  const guide_company = Math.max(0, parseInt(u.guide_company || 0));
+  const ranger_team = Math.max(0, parseInt(u.ranger_team || 0));
+  const cub_pack = Math.max(0, parseInt(u.cub_pack || 0));
+  const scout_troop = Math.max(0, parseInt(u.scout_troop || 0));
+  const rover_crew = Math.max(0, parseInt(u.rover_crew || 0));
+
+  const existing = queryOne("SELECT id FROM unit_details WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
+
+  if (existing) {
+    runQuery(`
+      UPDATE unit_details SET
+        bulbul_flock = ?, guide_company = ?, ranger_team = ?,
+        cub_pack = ?, scout_troop = ?, rover_crew = ?,
+        updated_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE district_id = ? AND year_id = ?
+    `, [
+      bulbul_flock, guide_company, ranger_team,
+      cub_pack, scout_troop, rover_crew,
+      user.name, district_id, year_id
+    ]);
+  } else {
+    const id = `ud_${district_id}_${year_id}`;
+    runQuery(`
+      INSERT INTO unit_details (
+        id, state_id, district_id, year_id,
+        bulbul_flock, guide_company, ranger_team, cub_pack, scout_troop, rover_crew,
+        updated_by
+      ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id, district_id, year_id,
+      bulbul_flock, guide_company, ranger_team, cub_pack, scout_troop, rover_crew,
+      user.name
+    ]);
+  }
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: "UPDATE_UNIT_DETAILS",
+    module: "MEMBERS",
+    districtId: district_id,
+    details: `Updated unit details for ${year_id}: Bulbul Flock: ${bulbul_flock}, Guide Company: ${guide_company}, Ranger Team: ${ranger_team}, Cub Pack: ${cub_pack}, Scout Troop: ${scout_troop}, Rover Crew: ${rover_crew}`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("UNIT_DETAILS_UPDATED", { districtId: district_id, yearId: year_id });
+
+  res.json({ message: "Unit Details saved successfully." });
+});
+
 // -------------------------------------------------------------
 // 6. OFFICIAL CONTACT PERSONS
 // -------------------------------------------------------------
@@ -1283,21 +1382,22 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
 const FIXED_OFFICIAL_POSITIONS = [
   "1. President",
   "2. District Chief Commissioner",
-  "3. District Secretary",
-  "4. District Commissioner (S)",
-  "5. District Commissioner (G)",
-  "6. District Organising Commissioner (Scouts)",
-  "7. District Organising Commissioner (Guides)",
-  "8. District Training Commissioner of Scouts",
-  "9. District Training Commissioner of Guides",
-  "10. District Youth Committee Chairman",
-  "11. District Media Co-ordinator",
-  "12. Jt. District Secretary",
-  "13. Asstt. District Secretary",
-  "14. District Treasurer",
-  "15. Nodal Officer of Aapdamitra",
-  "16. Co-chairman of Youth Committee",
-  "17. Growth Coordinator"
+  "3. District Commissioners (S)",
+  "4. District Commissioner (G)",
+  "5. District Secretary",
+  "6. Jt. District Secretary",
+  "7. Asstt. District Secretary",
+  "8. District Treasurer",
+  "9. District Organising Commissioner (Scouts)",
+  "10. District Organising Commissioner (Guides)",
+  "11. District Training Commissioner (Scouts)",
+  "12. District Training Commissioner (Guides)",
+  "13. Chairman District Youth Committee",
+  "14. Co-chairman District Youth Committee",
+  "15. District Media Co-ordinator",
+  "16. Nodal Officer of Aapdamitra",
+  "17. Growth Coordinator",
+  "18. District OYMS Co-ordinator"
 ];
 
 apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Response) => {
@@ -1323,19 +1423,46 @@ apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Respo
     [targetDistrictId, yearId]
   );
 
-  const cleanName = (s: string) => (s || "").replace(/^\d+\.\s*/, "").trim().toLowerCase();
+  const normalize = (s: string) =>
+    (s || "")
+      .replace(/^\d+\.\s*/, "")
+      .toLowerCase()
+      .replace(/[\(\)\.\-_]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-  // Return the fixed list of 17 positions in order, mapped with latest saved details
+  // Return the fixed list of 18 positions in order, mapped with latest saved details
   const results = FIXED_OFFICIAL_POSITIONS.map((posName, idx) => {
     const posOrder = idx + 1;
-    const basePosName = cleanName(posName);
-    const match = existing.find(e =>
-      e.position_order === posOrder ||
-      (e.position_name && cleanName(e.position_name) === basePosName) ||
-      (basePosName === "district secretary" && e.scouting_rank?.toLowerCase().includes("secretary") && !e.scouting_rank?.toLowerCase().includes("jt") && !e.scouting_rank?.toLowerCase().includes("asstt")) ||
-      (basePosName.includes("commissioner (s)") && (e.scouting_rank?.toLowerCase().includes("commissioner (scout") || e.scouting_rank?.toLowerCase().includes("commissioner (s)"))) ||
-      (basePosName.includes("commissioner (g)") && (e.scouting_rank?.toLowerCase().includes("guide commissioner") || e.scouting_rank?.toLowerCase().includes("commissioner (g)")))
-    );
+    const basePosName = normalize(posName);
+
+    const match = existing.find(e => {
+      const ePosName = normalize(e.position_name || "");
+      const eScoutRank = normalize(e.scouting_rank || e.designation || "");
+
+      if (e.position_name && ePosName === basePosName) return true;
+
+      // Special alias/rename matches
+      if (basePosName === "chairman district youth committee" && 
+          (ePosName.includes("youth committee chairman") || eScoutRank.includes("youth committee chairman"))) return true;
+      if (basePosName === "co chairman district youth committee" && 
+          (ePosName.includes("co chairman") || eScoutRank.includes("co chairman"))) return true;
+      if (basePosName === "district commissioners s" && 
+          (ePosName.includes("commissioner s") || ePosName.includes("commissioner scout") || eScoutRank.includes("commissioner s") || eScoutRank.includes("commissioner scout"))) return true;
+      if (basePosName === "district commissioner g" && 
+          (ePosName.includes("commissioner g") || ePosName.includes("commissioner guide") || eScoutRank.includes("commissioner g") || eScoutRank.includes("commissioner guide"))) return true;
+      if (basePosName === "district training commissioner scouts" && 
+          (ePosName.includes("training commissioner of scouts") || ePosName.includes("training commissioner scouts"))) return true;
+      if (basePosName === "district training commissioner guides" && 
+          (ePosName.includes("training commissioner of guides") || ePosName.includes("training commissioner guides"))) return true;
+      if (basePosName === "district secretary" && 
+          (ePosName === "district secretary" || (eScoutRank.includes("secretary") && !eScoutRank.includes("jt") && !eScoutRank.includes("asstt")))) return true;
+      if (basePosName === "jt district secretary" && (ePosName.includes("jt") && ePosName.includes("secretary"))) return true;
+      if (basePosName === "asstt district secretary" && ((ePosName.includes("asstt") || ePosName.includes("assistant")) && ePosName.includes("secretary"))) return true;
+      if (basePosName === "district oyms co ordinator" && (ePosName.includes("oyms"))) return true;
+
+      return e.position_order === posOrder;
+    });
 
     return {
       id: match ? match.id : `oc_${targetDistrictId}_${yearId}_pos_${posOrder}`,
@@ -1367,12 +1494,75 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  if (!Array.isArray(contacts)) {
-    res.status(400).json({ error: "Contacts must be an array of positions." });
+  // Single position save support for individual card saves
+  if (req.body.contact && !Array.isArray(req.body.contacts)) {
+    const c = req.body.contact;
+    const posOrder = Number(c.position_order);
+    if (!posOrder || posOrder < 1 || posOrder > FIXED_OFFICIAL_POSITIONS.length) {
+      res.status(400).json({ error: "Invalid position order." });
+      return;
+    }
+    const posName = FIXED_OFFICIAL_POSITIONS[posOrder - 1];
+    const id = `oc_${district_id}_${year_id}_pos_${posOrder}`;
+    const name = (c.name || "").trim();
+    const bsgId = (c.bsg_id || c.bsg_uid || "").trim();
+    const phone = (c.phone || "").trim();
+    const email = (c.email || "").trim();
+
+    runQuery("DELETE FROM official_contacts WHERE district_id = ? AND year_id = ? AND (position_order = ? OR id = ?)", [district_id, year_id, posOrder, id]);
+    runQuery(
+      `INSERT INTO official_contacts (
+        id, state_id, district_id, year_id, position_order, position_name,
+        name, bsg_id, bsg_uid, designation, scouting_rank,
+        email, phone, is_selected
+      ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        id, district_id, year_id, posOrder, posName,
+        name, bsgId, bsgId, posName, posName,
+        email, phone
+      ]
+    );
+
+    saveDatabase();
+
+    syncEntityToFirestore("official_contacts", id, "CREATE", {
+      id,
+      state_id: "state_er",
+      district_id,
+      year_id,
+      position_order: posOrder,
+      position_name: posName,
+      name,
+      bsg_id: bsgId,
+      phone,
+      email,
+      is_selected: 1,
+      updated_at: new Date().toISOString()
+    });
+
+    logAuditAction({
+      userId: user.id,
+      userName: user.name,
+      bsgId: user.bsg_id,
+      role: user.role,
+      action: "UPDATE_OFFICIAL_CONTACT",
+      module: "OFFICIAL_CONTACTS",
+      districtId: district_id,
+      details: `Saved ${posName} details for ${year_id}`,
+      ipAddress: req.ip
+    });
+
+    broadcastSyncEvent("CONTACTS_UPDATED", { districtId: district_id, yearId: year_id });
+    res.json({ message: `${posName} details saved successfully.` });
     return;
   }
 
-  // Clear existing and re-insert the 17 official positions for this district and session
+  if (!Array.isArray(contacts)) {
+    res.status(400).json({ error: "Contacts must be an array of positions or a single contact object." });
+    return;
+  }
+
+  // Clear existing and re-insert the 18 official positions for this district and session
   runQuery("DELETE FROM official_contacts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
 
   for (let i = 0; i < FIXED_OFFICIAL_POSITIONS.length; i++) {
@@ -1425,7 +1615,7 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
     action: "UPDATE_OFFICIAL_CONTACTS",
     module: "OFFICIAL_CONTACTS",
     districtId: district_id,
-    details: `Updated Official Contact Persons (17 positions saved) for ${year_id}`,
+    details: `Updated Official Contact Persons (18 positions saved) for ${year_id}`,
     ipAddress: req.ip
   });
 
@@ -1434,7 +1624,7 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
 });
 
 apiRouter.delete("/official-contacts/:id", authenticateToken, (req: Request, res: Response) => {
-  res.status(403).json({ error: "Fixed 17 Official Positions cannot be deleted." });
+  res.status(403).json({ error: "Fixed 18 Official Positions cannot be deleted." });
 });
 
 // -------------------------------------------------------------
@@ -1878,11 +2068,14 @@ apiRouter.get("/email-logs", authenticateToken, (req: Request, res: Response) =>
 // 10. ACADEMIC YEARS & DEADLINES
 // -------------------------------------------------------------
 
-apiRouter.get("/years", (req: Request, res: Response) => {
+const handleGetYears = (req: Request, res: Response) => {
   ensureCurrentFinancialYear();
   const years = queryAll<any>("SELECT * FROM academic_years ORDER BY label DESC");
   res.json(years);
-});
+};
+
+apiRouter.get("/years", handleGetYears);
+apiRouter.get("/academic-years", handleGetYears);
 
 apiRouter.post("/years/auto-generate", authenticateToken, (req: Request, res: Response) => {
   const { simulated_date } = req.body;

@@ -95,6 +95,21 @@ export interface MemberCounts {
   updated_at?: string;
 }
 
+export interface UnitDetails {
+  id?: string;
+  state_id?: string;
+  district_id: string;
+  year_id: string;
+  bulbul_flock: number;
+  guide_company: number;
+  ranger_team: number;
+  cub_pack: number;
+  scout_troop: number;
+  rover_crew: number;
+  updated_by?: string;
+  updated_at?: string;
+}
+
 export interface OfficialContact {
   id: string;
   state_id: string;

@@ -247,6 +247,22 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       UNIQUE(district_id, year_id)
     );
 
+    CREATE TABLE IF NOT EXISTS unit_details (
+      id TEXT PRIMARY KEY,
+      state_id TEXT NOT NULL DEFAULT 'state_er',
+      district_id TEXT NOT NULL,
+      year_id TEXT NOT NULL,
+      bulbul_flock INTEGER DEFAULT 0,
+      guide_company INTEGER DEFAULT 0,
+      ranger_team INTEGER DEFAULT 0,
+      cub_pack INTEGER DEFAULT 0,
+      scout_troop INTEGER DEFAULT 0,
+      rover_crew INTEGER DEFAULT 0,
+      updated_by TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(district_id, year_id)
+    );
+
     CREATE TABLE IF NOT EXISTS state_members (
       id TEXT PRIMARY KEY,
       state_id TEXT NOT NULL,
@@ -568,27 +584,32 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     console.error("Error migrating official_contacts table columns:", err);
   }
 
-  // --- Migration: Ensure 17 Official Positions for all 9 Districts ---
+  // --- Migration: Ensure 18 Official Positions for all 9 Districts ---
   try {
-    const FIXED_17_POSITIONS = [
-      "President",
-      "District Chief Commissioner",
-      "District Secretary",
-      "District Commissioner (S)",
-      "District Commissioner (G)",
-      "District Organising Commissioner (Scouts)",
-      "District Organising Commissioner (Guides)",
-      "District Training Commissioner of Scouts",
-      "District Training Commissioner of Guides",
-      "District Youth Committee Chairman",
-      "District Media Co-ordinator",
-      "Jt. District Secretary",
-      "Asstt. District Secretary",
-      "District Treasurer",
-      "Nodal Officer of Aapdamitra",
-      "Co-chairman of Youth Committee",
-      "Growth Coordinator"
+    const FIXED_18_POSITIONS = [
+      "1. President",
+      "2. District Chief Commissioner",
+      "3. District Commissioners (S)",
+      "4. District Commissioner (G)",
+      "5. District Secretary",
+      "6. Jt. District Secretary",
+      "7. Asstt. District Secretary",
+      "8. District Treasurer",
+      "9. District Organising Commissioner (Scouts)",
+      "10. District Organising Commissioner (Guides)",
+      "11. District Training Commissioner (Scouts)",
+      "12. District Training Commissioner (Guides)",
+      "13. Chairman District Youth Committee",
+      "14. Co-chairman District Youth Committee",
+      "15. District Media Co-ordinator",
+      "16. Nodal Officer of Aapdamitra",
+      "17. Growth Coordinator",
+      "18. District OYMS Co-ordinator"
     ];
+
+    // Renames: update position names if previously stored under old names
+    db.run(`UPDATE official_contacts SET position_name = '13. Chairman District Youth Committee' WHERE position_name LIKE '%Youth Committee Chairman%' OR position_name LIKE '%Chairman%Youth Committee%'`);
+    db.run(`UPDATE official_contacts SET position_name = '14. Co-chairman District Youth Committee' WHERE position_name LIKE '%Co-chairman of Youth Committee%' OR position_name LIKE '%Co-chairman District Youth Committee%'`);
 
     const allDists = ["dist_asn", "dist_cen", "dist_clw", "dist_hwh", "dist_jmp", "dist_kpa", "dist_llh", "dist_mldt", "dist_sdah"];
     for (const distId of allDists) {
@@ -597,8 +618,8 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       const hasRows = existingRows.length > 0;
 
       if (!hasRows) {
-        // Seed full initial set of 17 positions for this district
-        FIXED_17_POSITIONS.forEach((posName, idx) => {
+        // Seed full initial set of 18 positions for this district
+        FIXED_18_POSITIONS.forEach((posName, idx) => {
           const posOrder = idx + 1;
           const ocId = `oc_${distId}_year_2026_2027_pos_${posOrder}`;
           db.run(
@@ -607,10 +628,22 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
             [ocId, distId, posOrder, posName, posName, posName]
           );
         });
+      } else {
+        // Ensure position 18 exists for this district
+        const hasPos18 = existingRows.some((r: any) => r[0] === 18 || (r[1] && String(r[1]).includes("OYMS")));
+        if (!hasPos18) {
+          const ocId = `oc_${distId}_year_2026_2027_pos_18`;
+          const posName = "18. District OYMS Co-ordinator";
+          db.run(
+            `INSERT INTO official_contacts (id, state_id, district_id, year_id, position_order, position_name, name, bsg_id, bsg_uid, designation, scouting_rank, email, phone, is_selected)
+             VALUES (?, 'state_er', ?, 'year_2026_2027', 18, ?, '', '', '', ?, ?, '', '', 1)`,
+            [ocId, distId, posName, posName, posName]
+          );
+        }
       }
     }
   } catch (err) {
-    console.error("Error seeding initial 17 official positions:", err);
+    console.error("Error seeding initial 18 official positions:", err);
   }
 
   // --- Migration: Ensure census_reports table exists ---
@@ -630,108 +663,35 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
         status TEXT DEFAULT 'APPROVED'
       );
     `);
-
-    const crCheck = db.exec("SELECT count(*) FROM census_reports");
-    const crCount = Number(crCheck[0]?.values[0]?.[0] || 0);
-    if (crCount === 0) {
-      const samplePdfBase64 = "JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY5L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0wuyExWSEnNLchLLE7VUXBMTs1NzFEwtbAwt9BFyWdkZGBgcGZwcHQC0f55xRmlCsF5pXmpyQohGYl5eam5AFJMEe0KZW5kc3RyZWFtCmVuZG9iagoxIDAgb2JqCjw8L1R5cGUvUGFnZXMvQ291bnQgMS9LaWRzWzMgMCBSXT4+CmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PC9GMSA0IDAgUj4+Pj4vQ29udGVudHMgMiAwIFI+PgplbmRvYmoKNCAwIG9iago8PC9UeXBlL0ZvbnQvU3VidHlwZS9UeXBlMS9CYXNlRm9udC9IZWx2ZXRpY2E+PgplbmRvYmoKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMSAwIFI+PgplbmRvYmoKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCA1IDAgUj4+CiUlRU9G";
-      db.run(
-        `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ["cr_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Census_Report_2026_2027.pdf", 489100, samplePdfBase64, 1, "Central District User"]
-      );
-    }
   } catch (err) {
-    console.error("Error creating or seeding census_reports table:", err);
+    console.error("Error creating census_reports table:", err);
   }
 
-  // Ensure member counts exist for Liluah District across active academic year
+  // Ensure initial Unit Details records exist for all 9 districts with 0 by default
   try {
-    const liluahBase = {
-      bulbul: 175, guide: 360, ranger: 140, scout: 480, rover: 160, cub: 240,
-      flock_leaders: 22, guide_captains: 32, ranger_leaders: 20, cub_masters: 30, lady_cub_masters: 20,
-      prof_guides: 7, vol_comm: 6, supp_staff: 11, prof_staff: 13
-    };
-
-    const allYearsToSeed = [
-      { yearId: "year_2026_2027", factor: 1.0 },
-    ];
-
-    for (const y of allYearsToSeed) {
-      const checkMc = db.exec(`SELECT id FROM member_counts WHERE district_id = 'dist_llh' AND year_id = '${y.yearId}'`);
-      if (!checkMc[0]?.values?.length) {
-        const bulbul = Math.round(liluahBase.bulbul * y.factor);
-        const guide = Math.round(liluahBase.guide * y.factor);
-        const ranger = Math.round(liluahBase.ranger * y.factor);
-        const scout = Math.round(liluahBase.scout * y.factor);
-        const rover = Math.round(liluahBase.rover * y.factor);
-        const cub = Math.round(liluahBase.cub * y.factor);
-        const flock_leaders = Math.round(liluahBase.flock_leaders * y.factor);
-        const guide_captains = Math.round(liluahBase.guide_captains * y.factor);
-        const ranger_leaders = Math.round(liluahBase.ranger_leaders * y.factor);
-        const cub_masters = Math.round(liluahBase.cub_masters * y.factor);
-        const lady_cub_masters = Math.round(liluahBase.lady_cub_masters * y.factor);
-        const prof_guides = Math.round(liluahBase.prof_guides * y.factor);
-        const vol_comm = Math.round(liluahBase.vol_comm * y.factor);
-        const supp_staff = Math.round(liluahBase.supp_staff * y.factor);
-        const prof_staff = Math.round(liluahBase.prof_staff * y.factor);
-
-        const youthTotal = bulbul + guide + ranger + scout + rover + cub;
-        const unitLeadersTotal = flock_leaders + guide_captains + ranger_leaders + cub_masters + lady_cub_masters;
-        const profTotal = prof_guides + vol_comm + supp_staff + prof_staff;
-        const grandTotal = youthTotal + unitLeadersTotal + profTotal;
-
+    const allDistIds = ["dist_asn", "dist_cen", "dist_clw", "dist_hwh", "dist_jmp", "dist_kpa", "dist_llh", "dist_mldt", "dist_sdah"];
+    for (const distId of allDistIds) {
+      const existingUd = db.exec(`SELECT id FROM unit_details WHERE district_id = '${distId}' AND year_id = 'year_2026_2027'`);
+      if (!existingUd[0]?.values?.length) {
         db.run(
-          `INSERT INTO member_counts (
+          `INSERT INTO unit_details (
             id, state_id, district_id, year_id,
-            bunnies, bunny_aunties, bulbul, guide, ranger, scout, rover, cub,
-            flock_leaders, guide_captains, ranger_leaders, cub_masters, lady_cub_masters,
-            scout_masters, rover_scout_leaders,
-            professional_guides, voluntary_commissioners, support_staff, professionals_staff,
-            youth_total, unit_leaders_total, professionals_total, grand_total,
+            bulbul_flock, guide_company, ranger_team, cub_pack, scout_troop, rover_crew,
             updated_by
-          ) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            `mc_dist_llh_${y.yearId}`, "state_er", "dist_llh", y.yearId,
-            bulbul, guide, ranger, scout, rover, cub,
-            flock_leaders, guide_captains, ranger_leaders, cub_masters, lady_cub_masters,
-            prof_guides, vol_comm, supp_staff, prof_staff,
-            youthTotal, unitLeadersTotal, profTotal, grandTotal,
-            "System Seeder"
-          ]
+          ) VALUES (?, 'state_er', ?, 'year_2026_2027', 0, 0, 0, 0, 0, 0, 'Initial System Setup')`,
+          [`ud_${distId}_year_2026_2027`, distId]
         );
       }
     }
   } catch (err) {
-    console.error("Error seeding Liluah member counts:", err);
-  }
-
-  // Ensure Official Contacts exist for Liluah District
-  try {
-    const checkOc = db.exec("SELECT id FROM official_contacts WHERE district_id = 'dist_llh'");
-    if (!checkOc[0]?.values?.length) {
-      const liluahOfficials = [
-        { id: "oc_llh_1", dist: "dist_llh", name: "Shri Subhasish Roy", desig: "District Commissioner (Scout)", uid: "BSG-UID-LLH-301", railway_desig: "Senior Section Engineer (SSE)", email: "dc.scout.llh@erbsg.org", phone: "+91 98333 44551" },
-        { id: "oc_llh_2", dist: "dist_llh", name: "Smt. Manidipa Das", desig: "District Guide Commissioner", uid: "BSG-UID-LLH-302", railway_desig: "Senior Divisional Commercial Manager (Sr.DCM)", email: "dgc.llh@erbsg.org", phone: "+91 98333 44552" },
-      ];
-      for (const oc of liluahOfficials) {
-        db.run(
-          `INSERT INTO official_contacts (id, state_id, district_id, year_id, name, railway_designation, scouting_rank, bsg_id, designation, bsg_uid, email, phone, is_selected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [oc.id, "state_er", oc.dist, "year_2026_2027", oc.name, oc.railway_desig, oc.desig, oc.uid, oc.desig, oc.uid, oc.email, oc.phone]
-        );
-        db.run(
-          `INSERT INTO district_members (id, state_id, district_id, year_id, name, bsg_uid, designation, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [`dm_${oc.id}`, "state_er", oc.dist, "year_2026_2027", oc.name, oc.uid, oc.desig, oc.email, oc.phone]
-        );
-      }
-    }
-  } catch (err) {
-    console.error("Error seeding Liluah official contacts:", err);
+    console.error("Error seeding unit_details:", err);
   }
 
   // Idempotent check: Ensure current academic year exists
   const requiredYears = [
     { id: "year_2026_2027", label: "2026-2027", isCurrent: 1 },
   ];
+
   for (const y of requiredYears) {
     const check = db.exec(`SELECT count(*) FROM academic_years WHERE id = '${y.id}'`);
     const cnt = check[0]?.values[0]?.[0] || 0;
@@ -740,71 +700,12 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     }
   }
 
-  // Idempotent check: Seed multi-year member counts if missing
-  const yearDistribution: Record<string, { factor: number; targetGrandTotal: number }> = {};
-
-  const sampleBaseCounts: Record<string, {
-    bunnies: number; bunny_aunties: number; bulbul: number; guide: number; ranger: number;
-    scout: number; rover: number; cub: number; flock_leaders: number; guide_captains: number;
-    ranger_leaders: number; cub_masters: number; lady_cub_masters: number;
-    prof_guides: number; vol_comm: number; supp_staff: number; prof_staff: number;
-  }> = {
-    dist_cen: { bunnies: 85, bunny_aunties: 12, bulbul: 240, guide: 480, ranger: 190, scout: 650, rover: 210, cub: 310, flock_leaders: 30, guide_captains: 45, ranger_leaders: 25, cub_masters: 40, lady_cub_masters: 28, prof_guides: 10, vol_comm: 8, supp_staff: 14, prof_staff: 18 },
-    dist_sdah: { bunnies: 120, bunny_aunties: 16, bulbul: 310, guide: 590, ranger: 220, scout: 780, rover: 260, cub: 420, flock_leaders: 38, guide_captains: 55, ranger_leaders: 30, cub_masters: 50, lady_cub_masters: 34, prof_guides: 12, vol_comm: 10, supp_staff: 18, prof_staff: 22 },
-    dist_hwh: { bunnies: 110, bunny_aunties: 14, bulbul: 290, guide: 540, ranger: 200, scout: 720, rover: 240, cub: 390, flock_leaders: 35, guide_captains: 50, ranger_leaders: 28, cub_masters: 48, lady_cub_masters: 32, prof_guides: 11, vol_comm: 9, supp_staff: 16, prof_staff: 20 },
-    dist_asn: { bunnies: 70, bunny_aunties: 10, bulbul: 210, guide: 410, ranger: 160, scout: 560, rover: 180, cub: 280, flock_leaders: 26, guide_captains: 38, ranger_leaders: 22, cub_masters: 35, lady_cub_masters: 24, prof_guides: 8, vol_comm: 6, supp_staff: 12, prof_staff: 14 },
-    dist_clw: { bunnies: 55, bunny_aunties: 8, bulbul: 160, guide: 330, ranger: 130, scout: 450, rover: 150, cub: 220, flock_leaders: 20, guide_captains: 30, ranger_leaders: 18, cub_masters: 28, lady_cub_masters: 18, prof_guides: 6, vol_comm: 5, supp_staff: 10, prof_staff: 12 },
-    dist_llh: { bunnies: 0, bunny_aunties: 0, bulbul: 175, guide: 360, ranger: 140, scout: 480, rover: 160, cub: 240, flock_leaders: 22, guide_captains: 32, ranger_leaders: 20, cub_masters: 30, lady_cub_masters: 20, prof_guides: 7, vol_comm: 6, supp_staff: 11, prof_staff: 13 },
-    dist_mldt: { bunnies: 60, bunny_aunties: 9, bulbul: 180, guide: 360, ranger: 140, scout: 490, rover: 160, cub: 240, flock_leaders: 22, guide_captains: 32, ranger_leaders: 20, cub_masters: 30, lady_cub_masters: 20, prof_guides: 7, vol_comm: 6, supp_staff: 11, prof_staff: 13 },
-    dist_kpa: { bunnies: 65, bunny_aunties: 10, bulbul: 195, guide: 390, ranger: 150, scout: 520, rover: 170, cub: 260, flock_leaders: 24, guide_captains: 35, ranger_leaders: 21, cub_masters: 32, lady_cub_masters: 22, prof_guides: 8, vol_comm: 6, supp_staff: 12, prof_staff: 15 },
-    dist_jmp: { bunnies: 50, bunny_aunties: 7, bulbul: 150, guide: 310, ranger: 120, scout: 430, rover: 140, cub: 200, flock_leaders: 18, guide_captains: 28, ranger_leaders: 16, cub_masters: 25, lady_cub_masters: 16, prof_guides: 5, vol_comm: 4, supp_staff: 9, prof_staff: 10 },
-  };
-
-  for (const [yearKey, cfg] of Object.entries(yearDistribution)) {
-    const countCheck = db.exec(`SELECT count(*) FROM member_counts WHERE year_id = '${yearKey}'`);
-    const existingCount = countCheck[0]?.values[0]?.[0] || 0;
-    if (Number(existingCount) === 0) {
-      const distKeys = Object.keys(sampleBaseCounts);
-      let runningYearTotal = 0;
-
-      distKeys.forEach((distId, idx) => {
-        const c = sampleBaseCounts[distId];
-        const isLast = idx === distKeys.length - 1;
-
-        const bulbul = Math.round(c.bulbul * cfg.factor);
-        const guide = Math.round(c.guide * cfg.factor);
-        const ranger = Math.round(c.ranger * cfg.factor);
-        const cub = Math.round(c.cub * cfg.factor);
-        const scout = Math.round(c.scout * cfg.factor);
-        const rover = Math.round(c.rover * cfg.factor);
-        const flock_leaders = Math.round(c.flock_leaders * cfg.factor);
-        const guide_captains = Math.round(c.guide_captains * cfg.factor);
-        const ranger_leaders = Math.round(c.ranger_leaders * cfg.factor);
-        const cub_masters = Math.round(c.cub_masters * cfg.factor);
-        const lady_cub_masters = Math.round(c.lady_cub_masters * cfg.factor);
-        const scout_masters = 0;
-        const rover_scout_leaders = 0;
-        const prof_guides = Math.round(c.prof_guides * cfg.factor);
-        const vol_comm = Math.round(c.vol_comm * cfg.factor);
-        const supp_staff = Math.round(c.supp_staff * cfg.factor);
-        let prof_staff = Math.round(c.prof_staff * cfg.factor);
-
-        let youthTotal = bulbul + guide + ranger + cub + scout + rover;
-        let unitLeadersTotal = flock_leaders + guide_captains + ranger_leaders + cub_masters + lady_cub_masters;
-        let profTotal = prof_guides + vol_comm + supp_staff + prof_staff;
-        let grandTotal = youthTotal + unitLeadersTotal + profTotal;
-
-        // Balance exact target total for last district
-        if (isLast) {
-          const diff = cfg.targetGrandTotal - (runningYearTotal + grandTotal);
-          if (diff !== 0) {
-            prof_staff += diff;
-            profTotal += diff;
-            grandTotal += diff;
-          }
-        }
-        runningYearTotal += grandTotal;
-
+  // Ensure initial Member Counts entries exist for all 9 districts with 0 values
+  try {
+    const allDistIds = ["dist_asn", "dist_cen", "dist_clw", "dist_hwh", "dist_jmp", "dist_kpa", "dist_llh", "dist_mldt", "dist_sdah"];
+    for (const distId of allDistIds) {
+      const existingMc = db.exec(`SELECT id FROM member_counts WHERE district_id = '${distId}' AND year_id = 'year_2026_2027'`);
+      if (!existingMc[0]?.values?.length) {
         db.run(
           `INSERT INTO member_counts (
             id, state_id, district_id, year_id,
@@ -814,19 +715,13 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
             professional_guides, voluntary_commissioners, support_staff, professionals_staff,
             youth_total, unit_leaders_total, professionals_total, grand_total,
             updated_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            `mc_${distId}_${yearKey}`, "state_er", distId, yearKey,
-            0, 0, bulbul, guide, ranger, scout, rover, cub,
-            flock_leaders, guide_captains, ranger_leaders, cub_masters, lady_cub_masters,
-            scout_masters, rover_scout_leaders,
-            prof_guides, vol_comm, supp_staff, prof_staff,
-            youthTotal, unitLeadersTotal, profTotal, grandTotal,
-            "System Seeder"
-          ]
+          ) VALUES (?, 'state_er', ?, 'year_2026_2027', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'Initial System Setup')`,
+          [`mc_${distId}_year_2026_2027`, distId]
         );
-      });
+      }
     }
+  } catch (err) {
+    console.error("Error ensuring initial member counts:", err);
   }
 
   const stateCheckResult = db.exec("SELECT count(*) FROM states");
@@ -835,7 +730,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
   if (Number(stateCount) === 0) {
     console.log("Seeding Eastern Railway State and 9 initial Districts...");
     db.run(
-      `INSERT INTO states (id, name, code, bsg_id, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO states (id, name, code, bsg_id, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         "state_er",
         "Eastern Railway Bharat Scouts and Guides",
@@ -862,7 +757,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
     for (const d of initialDistricts) {
       db.run(
-        `INSERT INTO districts (id, state_id, name, code, bsg_id, email, phone, address, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO districts (id, state_id, name, code, bsg_id, email, phone, address, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [d.id, "state_er", d.name, d.code, d.bsgId, d.email, d.phone, d.address, "ACTIVE"]
       );
     }
@@ -872,12 +767,12 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       { id: "year_2026_2027", label: "2026-2027", isCurrent: 1 },
     ];
     for (const y of years) {
-      db.run(`INSERT INTO academic_years (id, label, is_current, status) VALUES (?, ?, ?, ?)`, [y.id, y.label, y.isCurrent, "ACTIVE"]);
+      db.run(`INSERT OR IGNORE INTO academic_years (id, label, is_current, status) VALUES (?, ?, ?, ?)`, [y.id, y.label, y.isCurrent, "ACTIVE"]);
     }
 
     // Seed Deadlines
     db.run(
-      `INSERT INTO deadlines (id, year_id, deadline_date, status, notes) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO deadlines (id, year_id, deadline_date, status, notes) VALUES (?, ?, ?, ?, ?)`,
       ["dl_2026_2027", "year_2026_2027", "2026-07-31", "OPEN", "Official annual census and member registration deadline"]
     );
 
@@ -888,7 +783,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
     // 1. Seed State Admin
     db.run(
-      `INSERT INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
+      `INSERT OR IGNORE INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         "usr_state_admin",
@@ -905,11 +800,11 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       ]
     );
 
-    // 2. Seed 8 District Users with MUST_CHANGE_PASSWORD = 1 and Test@1234 hash
+    // 2. Seed 9 District Users with MUST_CHANGE_PASSWORD = 1 and Test@1234 hash
     for (const d of initialDistricts) {
       const userId = `usr_${d.id}`;
       db.run(
-        `INSERT INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
+        `INSERT OR IGNORE INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
@@ -927,47 +822,18 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       );
     }
 
-    // Seed realistic Initial Member Data for 2026-2027 across the 9 districts
-    const initialCounts: Record<string, {
-      bunnies: number; bunny_aunties: number; bulbul: number; guide: number; ranger: number;
-      scout: number; rover: number; cub: number; flock_leaders: number; guide_captains: number;
-      ranger_leaders: number; cub_masters: number; lady_cub_masters: number;
-      prof_guides: number; vol_comm: number; supp_staff: number; prof_staff: number;
-    }> = {
-      dist_asn: { bunnies: 0, bunny_aunties: 0, bulbul: 210, guide: 410, ranger: 160, scout: 560, rover: 180, cub: 280, flock_leaders: 26, guide_captains: 38, ranger_leaders: 22, cub_masters: 35, lady_cub_masters: 24, prof_guides: 8, vol_comm: 6, supp_staff: 12, prof_staff: 14 },
-      dist_cen: { bunnies: 0, bunny_aunties: 0, bulbul: 240, guide: 480, ranger: 190, scout: 650, rover: 210, cub: 310, flock_leaders: 30, guide_captains: 45, ranger_leaders: 25, cub_masters: 40, lady_cub_masters: 28, prof_guides: 10, vol_comm: 8, supp_staff: 14, prof_staff: 18 },
-      dist_clw: { bunnies: 0, bunny_aunties: 0, bulbul: 160, guide: 330, ranger: 130, scout: 450, rover: 150, cub: 220, flock_leaders: 20, guide_captains: 30, ranger_leaders: 18, cub_masters: 28, lady_cub_masters: 18, prof_guides: 6, vol_comm: 5, supp_staff: 10, prof_staff: 12 },
-      dist_hwh: { bunnies: 0, bunny_aunties: 0, bulbul: 290, guide: 540, ranger: 200, scout: 720, rover: 240, cub: 390, flock_leaders: 35, guide_captains: 50, ranger_leaders: 28, cub_masters: 48, lady_cub_masters: 32, prof_guides: 11, vol_comm: 9, supp_staff: 16, prof_staff: 20 },
-      dist_jmp: { bunnies: 0, bunny_aunties: 0, bulbul: 150, guide: 310, ranger: 120, scout: 430, rover: 140, cub: 200, flock_leaders: 18, guide_captains: 28, ranger_leaders: 16, cub_masters: 25, lady_cub_masters: 16, prof_guides: 5, vol_comm: 4, supp_staff: 9, prof_staff: 10 },
-      dist_kpa: { bunnies: 0, bunny_aunties: 0, bulbul: 195, guide: 390, ranger: 150, scout: 520, rover: 170, cub: 260, flock_leaders: 24, guide_captains: 35, ranger_leaders: 21, cub_masters: 32, lady_cub_masters: 22, prof_guides: 8, vol_comm: 6, supp_staff: 12, prof_staff: 15 },
-      dist_llh: { bunnies: 0, bunny_aunties: 0, bulbul: 175, guide: 360, ranger: 140, scout: 480, rover: 160, cub: 240, flock_leaders: 22, guide_captains: 32, ranger_leaders: 20, cub_masters: 30, lady_cub_masters: 20, prof_guides: 7, vol_comm: 6, supp_staff: 11, prof_staff: 13 },
-      dist_mldt: { bunnies: 0, bunny_aunties: 0, bulbul: 180, guide: 360, ranger: 140, scout: 490, rover: 160, cub: 240, flock_leaders: 22, guide_captains: 32, ranger_leaders: 20, cub_masters: 30, lady_cub_masters: 20, prof_guides: 7, vol_comm: 6, supp_staff: 11, prof_staff: 13 },
-      dist_sdah: { bunnies: 0, bunny_aunties: 0, bulbul: 310, guide: 590, ranger: 220, scout: 780, rover: 260, cub: 420, flock_leaders: 38, guide_captains: 55, ranger_leaders: 30, cub_masters: 50, lady_cub_masters: 34, prof_guides: 12, vol_comm: 10, supp_staff: 18, prof_staff: 22 },
-    };
-
-    for (const [distId, c] of Object.entries(initialCounts)) {
-      const youthTotal = c.bulbul + c.guide + c.ranger + c.scout + c.rover + c.cub;
-      const unitLeadersTotal = c.flock_leaders + c.guide_captains + c.ranger_leaders + c.cub_masters + c.lady_cub_masters;
-      const profTotal = c.prof_guides + c.vol_comm + c.supp_staff + c.prof_staff;
-      const grandTotal = youthTotal + unitLeadersTotal + profTotal;
-
+    // Seed clean Initial Member Data (0 values) for 2026-2027 across the 9 districts
+    for (const d of initialDistricts) {
       db.run(
-        `INSERT INTO member_counts (
+        `INSERT OR IGNORE INTO member_counts (
           id, state_id, district_id, year_id,
           bunnies, bunny_aunties, bulbul, guide, ranger, scout, rover, cub,
           flock_leaders, guide_captains, ranger_leaders, cub_masters, lady_cub_masters,
           professional_guides, voluntary_commissioners, support_staff, professionals_staff,
           youth_total, unit_leaders_total, professionals_total, grand_total,
           updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          `mc_${distId}_2026`, "state_er", distId, "year_2026_2027",
-          0, 0, c.bulbul, c.guide, c.ranger, c.scout, c.rover, c.cub,
-          c.flock_leaders, c.guide_captains, c.ranger_leaders, c.cub_masters, c.lady_cub_masters,
-          c.prof_guides, c.vol_comm, c.supp_staff, c.prof_staff,
-          youthTotal, unitLeadersTotal, profTotal, grandTotal,
-          "System Seeder"
-        ]
+        ) VALUES (?, 'state_er', ?, 'year_2026_2027', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'Initial System Setup')`,
+        [`mc_${d.id}_2026`, d.id]
       );
     }
 
@@ -980,50 +846,14 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     ];
     for (const sm of stateMembers) {
       db.run(
-        `INSERT INTO state_members (id, state_id, year_id, name, bsg_uid, designation, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO state_members (id, state_id, year_id, name, bsg_uid, designation, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [`sm_${sm.uid}`, "state_er", "year_2026_2027", sm.name, sm.uid, sm.designation, sm.email, sm.phone]
       );
     }
 
-    // Seed Sample Official Contact Persons for Central and Sealdah
-    const officials = [
-      { id: "oc_cen_1", dist: "dist_cen", name: "Shri Rajeshwar Verma", desig: "District Commissioner (Scout)", uid: "BSG-UID-CEN-101", email: "dc.scout.cen@erbsg.org", phone: "+91 98311 55661" },
-      { id: "oc_cen_2", dist: "dist_cen", name: "Smt. Swati Bose", desig: "District Secretary", uid: "BSG-UID-CEN-102", email: "sec.cen@erbsg.org", phone: "+91 98311 55662" },
-      { id: "oc_sdah_1", dist: "dist_sdah", name: "Shri Amitava Sen", desig: "District Commissioner (Scout)", uid: "BSG-UID-SDAH-201", email: "dc.sdah@erbsg.org", phone: "+91 98322 77881" },
-      { id: "oc_sdah_2", dist: "dist_sdah", name: "Smt. Papiya Sengupta", desig: "District Guide Commissioner", uid: "BSG-UID-SDAH-202", email: "dgc.sdah@erbsg.org", phone: "+91 98322 77882" },
-    ];
-    for (const oc of officials) {
-      db.run(
-        `INSERT INTO official_contacts (id, state_id, district_id, year_id, name, designation, bsg_uid, email, phone, is_selected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [oc.id, "state_er", oc.dist, "year_2026_2027", oc.name, oc.desig, oc.uid, oc.email, oc.phone]
-      );
-      db.run(
-        `INSERT INTO district_members (id, state_id, district_id, year_id, name, bsg_uid, designation, email, phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [`dm_${oc.id}`, "state_er", oc.dist, "year_2026_2027", oc.name, oc.uid, oc.desig, oc.email, oc.phone]
-      );
-    }
-
-    // Seed sample Annual Report & Audited Statement for Central and Sealdah
-    const samplePdfBase64 = "JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDY5L0ZpbHRlci9GbGF0ZURlY29kZT4+c3RyZWFtCnicS0wuyExWSEnNLchLLE7VUXBMTs1NzFEwtbAwt9BFyWdkZGBgcGZwcHQC0f55xRmlCsF5pXmpyQohGYl5eam5AFJMEe0KZW5kc3RyZWFtCmVuZG9iagoxIDAgb2JqCjw8L1R5cGUvUGFnZXMvQ291bnQgMS9LaWRzWzMgMCBSXT4+CmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMSAwIFIvTWVkaWFCb3hbMCAwIDU5NSA4NDJdL1Jlc291cmNlczw8L0ZvbnQ8PC9GMSA0IDAgUj4+Pj4vQ29udGVudHMgMiAwIFI+PgplbmRvYmoKNCAwIG9iago8PC9UeXBlL0ZvbnQvU3VidHlwZS9UeXBlMS9CYXNlRm9udC9IZWx2ZXRpY2E+PgplbmRvYmoKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMSAwIFI+PgplbmRvYmoKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCA1IDAgUj4+CiUlRU9G";
-
-    db.run(
-      `INSERT INTO annual_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["ar_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Annual_Report_2026_2027.pdf", 458200, samplePdfBase64, 1, "Central District User"]
-    );
-
-    db.run(
-      `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["cr_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_District_Census_Report_2026_2027.pdf", 489100, samplePdfBase64, 1, "Central District User"]
-    );
-
-    db.run(
-      `INSERT INTO audited_statements (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ["as_cen_2026", "state_er", "dist_cen", "year_2026_2027", "Central_Audited_Statement_2026_2027.pdf", 512000, samplePdfBase64, 1, "Central District User"]
-    );
-
     // Initial Audit Log
     db.run(
-      `INSERT INTO audit_logs (id, user_id, user_name, bsg_id, role, action, module, state_id, district_id, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO audit_logs (id, user_id, user_name, bsg_id, role, action, module, state_id, district_id, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         "log_init_01",
         "usr_state_admin",
@@ -1034,8 +864,46 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
         "DATABASE",
         "state_er",
         null,
-        "System initialized with Eastern Railway State, 8 Districts, and default secure credentials."
+        "System initialized with Eastern Railway State, 9 Districts, and production-ready security credentials."
       ]
     );
+  }
+
+  // --- Production Readiness: Initial District Data Reset for all 9 Districts ---
+  try {
+    // 1. Reset all membership counts to 0 by default
+    db.run(`
+      UPDATE member_counts SET
+        bunnies = 0, bunny_aunties = 0, bulbul = 0, guide = 0, ranger = 0, scout = 0, rover = 0, cub = 0,
+        flock_leaders = 0, guide_captains = 0, ranger_leaders = 0, cub_masters = 0, lady_cub_masters = 0,
+        scout_masters = 0, rover_scout_leaders = 0,
+        professional_guides = 0, voluntary_commissioners = 0, support_staff = 0, professionals_staff = 0,
+        youth_total = 0, unit_leaders_total = 0, professionals_total = 0, grand_total = 0
+    `);
+
+    // 2. Reset all unit details to 0 by default
+    db.run(`
+      UPDATE unit_details SET
+        bulbul_flock = 0, guide_company = 0, ranger_team = 0,
+        cub_pack = 0, scout_troop = 0, rover_crew = 0
+    `);
+
+    // 3. Reset personal details in official_contacts to blank (preserve 18 positions)
+    db.run(`
+      UPDATE official_contacts SET
+        name = '', railway_designation = '', scouting_rank = '',
+        bsg_id = '', bsg_uid = '', email = '', phone = '', is_selected = 1
+    `);
+
+    // 4. Ensure statutory document records are completely empty (no uploaded documents)
+    db.run("DELETE FROM annual_reports");
+    db.run("DELETE FROM census_reports");
+    db.run("DELETE FROM audited_statements");
+    db.run("DELETE FROM district_members");
+
+    // 5. Reset basic organizational details fields to blank default
+    db.run("UPDATE districts SET address = '', phone = '', registration_no = ''");
+  } catch (err) {
+    console.error("Error executing initial district data reset:", err);
   }
 }

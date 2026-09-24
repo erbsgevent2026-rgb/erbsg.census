@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../services/api";
-import { MemberCounts, DeadlineRecord } from "../types";
+import { MemberCounts, UnitDetails, DeadlineRecord } from "../types";
 import { exportMembersToExcel } from "../utils/excelExport";
-import { saveMemberCountsFirestore, getMemberCountsFirestore } from "../services/firestoreData";
+import {
+  saveMemberCountsFirestore,
+  getMemberCountsFirestore,
+  saveUnitDetailsFirestore,
+  getUnitDetailsFirestore
+} from "../services/firestoreData";
 import {
   Users,
   Download,
@@ -15,7 +20,8 @@ import {
   AlertCircle,
   Loader2,
   RefreshCw,
-  Shield
+  Shield,
+  Layers
 } from "lucide-react";
 
 export const MembersView: React.FC = () => {
@@ -68,6 +74,21 @@ export const MembersView: React.FC = () => {
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Unit Details State (Bulbul Flock, Guide Company, Ranger Team, Cub Pack, Scout Troop, Rover Crew)
+  const [unitDetails, setUnitDetails] = useState<UnitDetails>({
+    district_id: targetDistrictId,
+    year_id: selectedYear,
+    bulbul_flock: 0,
+    guide_company: 0,
+    ranger_team: 0,
+    cub_pack: 0,
+    scout_troop: 0,
+    rover_crew: 0,
+  });
+  const [unitLoading, setUnitLoading] = useState<boolean>(false);
+  const [unitSaving, setUnitSaving] = useState<boolean>(false);
+  const [unitStatusMessage, setUnitStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const fetchMembers = async () => {
     try {
       setLoading(true);
@@ -95,9 +116,70 @@ export const MembersView: React.FC = () => {
     }
   };
 
+  const fetchUnitDetails = async () => {
+    try {
+      setUnitLoading(true);
+      const res = await api.getUnitDetails(targetDistrictId, selectedYear);
+      if (res.data) {
+        setUnitDetails(res.data);
+      }
+    } catch (err: any) {
+      console.warn("API getUnitDetails failed, attempting Firestore fallback:", err);
+      try {
+        const fsData = await getUnitDetailsFirestore(targetDistrictId, selectedYear);
+        if (fsData) {
+          setUnitDetails(fsData);
+        }
+      } catch {
+        // Fallback catch
+      }
+    } finally {
+      setUnitLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchMembers();
+    fetchUnitDetails();
   }, [targetDistrictId, selectedYear, syncEventTimestamp]);
+
+  const handleUnitInputChange = (field: keyof UnitDetails, value: string) => {
+    const num = Math.max(0, parseInt(value) || 0);
+    setUnitDetails((prev) => ({
+      ...prev,
+      [field]: num,
+    }));
+  };
+
+  const handleSaveUnitDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isStateAdmin) return;
+
+    setUnitSaving(true);
+    setUnitStatusMessage(null);
+
+    try {
+      const res = await api.saveUnitDetails(targetDistrictId, selectedYear, unitDetails);
+      saveUnitDetailsFirestore(targetDistrictId, selectedYear, unitDetails, user).catch((fsErr) =>
+        console.warn("Background firestore unit details sync notice:", fsErr)
+      );
+
+      setUnitStatusMessage({ type: "success", text: res.message || "Unit Details saved successfully." });
+      await fetchUnitDetails();
+    } catch (err: any) {
+      try {
+        await saveUnitDetailsFirestore(targetDistrictId, selectedYear, unitDetails, user);
+        setUnitStatusMessage({
+          type: "success",
+          text: "Saved directly to Cloud Firestore database."
+        });
+      } catch (fsErr: any) {
+        setUnitStatusMessage({ type: "error", text: err.message || "Failed to save Unit Details." });
+      }
+    } finally {
+      setUnitSaving(false);
+    }
+  };
 
   // Handle live calculation when input changes
   const handleInputChange = (field: keyof MemberCounts, value: string) => {
@@ -245,7 +327,7 @@ export const MembersView: React.FC = () => {
           <div>
             <span className="font-bold block">View-Only Administrator Mode</span>
             <span>
-              District membership census details across Youth Categories, Unit Leaders, and Professionals & Support Staff are entered and updated directly by authorized District Users. State Administrators have view-only access. Any updates submitted by a district automatically appear here in real time.
+              District membership census details across Youth Members, Unit Leaders, and Professionals/Staff are entered and updated directly by authorized District Users. State Administrators have view-only access. Any updates submitted by a district automatically appear here in real time.
             </span>
           </div>
         </div>
@@ -292,7 +374,7 @@ export const MembersView: React.FC = () => {
 
         <div className="bg-amber-50 dark:bg-amber-950/40 p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 shadow-xs">
           <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            Professionals / Staff
+            Professionals/Staff
           </span>
           <div className="text-2xl sm:text-3xl font-black text-amber-900 dark:text-amber-100 mt-1">
             {members.professionals_total.toLocaleString()}
@@ -311,25 +393,249 @@ export const MembersView: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Census Form */}
-      <form onSubmit={handleSave} className="space-y-6">
-        {/* Section 1: Youth Categories */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+      {/* Unit Details Card (Directly above Members Breakdown) */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden">
+        <div className="p-4 bg-slate-100/90 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-lg">
+              <Layers className="w-5 h-5" />
+            </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-slate-900 dark:text-white text-sm">
-                  1. Youth Membership Categories
+                <h3 className="font-extrabold text-emerald-800 dark:text-emerald-300 text-sm sm:text-base tracking-tight">
+                  Unit Details
                 </h3>
                 {isStateAdmin && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                     View-Only
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Bulbuls, Guides, Rangers & Cubs, Scouts, Rovers</p>
+              <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                Number of registered units across sections in {districtName}
+              </p>
             </div>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+          </div>
+          {unitDetails.updated_at && (
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:inline font-medium">
+              Last saved: {new Date(unitDetails.updated_at).toLocaleString()}
+            </span>
+          )}
+        </div>
+
+        {unitStatusMessage && (
+          <div
+            className={`mx-5 mt-4 p-3 rounded-xl border text-xs flex items-center gap-2 font-medium ${
+              unitStatusMessage.type === "success"
+                ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
+                : "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300"
+            }`}
+          >
+            {unitStatusMessage.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            )}
+            <span>{unitStatusMessage.text}</span>
+          </div>
+        )}
+
+        <div className="p-5 space-y-4">
+          {/* Row 1: Female Wing Units (Bulbul Flock, Guide Company, Ranger Team) */}
+          <div>
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+              Female Wing Units
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  1. No. of Bulbul Flock
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.bulbul_flock || ""}
+                  onChange={(e) => handleUnitInputChange("bulbul_flock", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  2. No. of Guide Company
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.guide_company || ""}
+                  onChange={(e) => handleUnitInputChange("guide_company", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  3. No. of Ranger Team
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.ranger_team || ""}
+                  onChange={(e) => handleUnitInputChange("ranger_team", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Male Wing Units (Cub Pack, Scout Troop, Rover Crew) */}
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-750">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+              Male Wing Units
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  4. No. of Cub Pack
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.cub_pack || ""}
+                  onChange={(e) => handleUnitInputChange("cub_pack", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  5. No. of Scout Troop
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.scout_troop || ""}
+                  onChange={(e) => handleUnitInputChange("scout_troop", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  6. No. of Rover Crew
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isStateAdmin}
+                  value={unitDetails.rover_crew || ""}
+                  onChange={(e) => handleUnitInputChange("rover_crew", e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none ${
+                    isStateAdmin
+                      ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-not-allowed"
+                      : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Save Button for Unit Details */}
+        {!isStateAdmin ? (
+          <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-700">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Save unit and section counts for {districtName}.
+            </p>
+            <button
+              type="button"
+              onClick={handleSaveUnitDetails}
+              disabled={unitSaving}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer"
+            >
+              {unitSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Saving Unit Details...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save Unit Details</span>
+                </>
+              )}
+            </button>
+          </div>
+        ) : (
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-850 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-blue-500" />
+              Administrator View-Only: Displaying saved Unit Details for {districtName}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Members Breakdown Header */}
+      <div className="pt-2">
+        <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+          Members Breakdown
+        </h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Official section-wise membership census figures across all categories
+        </p>
+      </div>
+
+      {/* Main Census Form */}
+      <form onSubmit={handleSave} className="space-y-6">
+        {/* Section 1: Youth Members */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden">
+          <div className="p-4 bg-slate-100/90 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-blue-700 dark:text-blue-300 text-sm sm:text-base tracking-tight">
+                  1. Youth Members
+                </h3>
+                {isStateAdmin && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                    View-Only
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">Youth Members</p>
+            </div>
+            <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
               Subtotal: {members.youth_total}
             </span>
           </div>
@@ -403,21 +709,21 @@ export const MembersView: React.FC = () => {
 
         {/* Section 2: Unit Leaders */}
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <div className="p-4 bg-slate-100/90 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-slate-900 dark:text-white text-sm">
+                <h3 className="font-extrabold text-purple-700 dark:text-purple-300 text-sm sm:text-base tracking-tight">
                   2. Unit Leaders
                 </h3>
                 {isStateAdmin && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                     View-Only
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Commissioned Unit Leadership and Assistants</p>
+              <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">Unit Leaders</p>
             </div>
-            <span className="text-xs font-bold text-purple-600 dark:text-purple-400">
+            <span className="text-xs font-bold text-purple-700 dark:text-purple-300">
               Subtotal: {members.unit_leaders_total}
             </span>
           </div>
@@ -489,23 +795,23 @@ export const MembersView: React.FC = () => {
           </div>
         </div>
 
-        {/* Section 3: Professionals & Support Staff */}
+        {/* Section 3: Professionals/Staff */}
         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <div className="p-4 bg-slate-100/90 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-slate-900 dark:text-white text-sm">
-                  3. Professionals & Support Staff
+                <h3 className="font-extrabold text-amber-700 dark:text-amber-300 text-sm sm:text-base tracking-tight">
+                  3. Professionals/Staff
                 </h3>
                 {isStateAdmin && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                     View-Only
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">Staff, voluntary commissioners, and technical officers</p>
+              <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">Professionals/Staff</p>
             </div>
-            <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
+            <span className="text-xs font-bold text-amber-700 dark:text-amber-300">
               Subtotal: {members.professionals_total}
             </span>
           </div>
