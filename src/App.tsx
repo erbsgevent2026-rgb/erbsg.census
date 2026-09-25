@@ -18,6 +18,13 @@ import { EmailOutboxView } from "./pages/EmailOutboxView";
 import { ProfileView } from "./pages/ProfileView";
 import { Loader2 } from "lucide-react";
 
+const STATE_ADMIN_ONLY_VIEWS = [
+  "district-management",
+  "district-users",
+  "audit-logs",
+  "email-outbox",
+];
+
 const PortalMain: React.FC = () => {
   const { user, loading } = useAuth();
   const [currentView, setCurrentView] = useState("dashboard");
@@ -28,6 +35,18 @@ const PortalMain: React.FC = () => {
     document.documentElement.classList.remove("dark");
     localStorage.removeItem("erbsg_theme");
   }, []);
+
+  // Reset to dashboard whenever user session ID changes
+  useEffect(() => {
+    setCurrentView("dashboard");
+  }, [user?.id]);
+
+  // If a District User is on a State Administrator-only route, immediately redirect to dashboard
+  useEffect(() => {
+    if (user && user.role !== "STATE_ADMIN" && STATE_ADMIN_ONLY_VIEWS.includes(currentView)) {
+      setCurrentView("dashboard");
+    }
+  }, [user, currentView]);
 
   if (loading) {
     return (
@@ -50,6 +69,33 @@ const PortalMain: React.FC = () => {
   const isFirstLogin = !!user.mustChangePassword;
 
   const renderView = () => {
+    const isStateAdmin = user.role === "STATE_ADMIN";
+
+    // Strict frontend permission guard: prevent non-admins from rendering state admin modules
+    if (!isStateAdmin && STATE_ADMIN_ONLY_VIEWS.includes(currentView)) {
+      return (
+        <div className="p-8 max-w-xl mx-auto text-center space-y-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm mt-8">
+          <div className="w-14 h-14 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center text-amber-600 border border-amber-200 dark:border-amber-800 mx-auto">
+            <span className="text-2xl font-bold">!</span>
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+              State Administrator Access Required
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+              This module is strictly restricted to Eastern Railway State Headquarters Administrators. District officers can access their assigned district operations from the navigation menu.
+            </p>
+          </div>
+          <button
+            onClick={() => setCurrentView("dashboard")}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs"
+          >
+            Go to District Dashboard
+          </button>
+        </div>
+      );
+    }
+
     switch (currentView) {
       case "dashboard":
       case "analytics":
@@ -125,7 +171,7 @@ const PortalMain: React.FC = () => {
           isOpen={true}
           isFirstLogin={true}
           onSuccess={() => {
-            // Modal updates user context and closes
+            setCurrentView("dashboard");
           }}
         />
       )}

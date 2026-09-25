@@ -53,6 +53,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const handleSelect = (viewId: string) => {
+    // Strictly prevent non-admins from selecting any state administration module
+    if (!isStateAdmin && adminNavItems.some((item) => item.id === viewId)) {
+      onNavigate("dashboard");
+      onCloseMobile();
+      return;
+    }
     onNavigate(viewId);
     onCloseMobile();
   };

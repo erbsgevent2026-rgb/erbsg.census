@@ -37,6 +37,11 @@ export const DistrictManagementView: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   const fetchDistrictStats = async () => {
+    if (!user || user.role !== "STATE_ADMIN") {
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const data = await api.getDashboardStats(selectedYear);
@@ -52,7 +57,23 @@ export const DistrictManagementView: React.FC = () => {
 
   useEffect(() => {
     fetchDistrictStats();
-  }, [selectedYear, syncEventTimestamp]);
+  }, [selectedYear, syncEventTimestamp, user?.role]);
+
+  if (user && user.role !== "STATE_ADMIN") {
+    return (
+      <div className="p-8 max-w-xl mx-auto text-center space-y-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm mt-8">
+        <div className="w-14 h-14 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center text-amber-600 border border-amber-200 dark:border-amber-800 mx-auto">
+          <ShieldCheck className="w-6 h-6 text-amber-600" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
+          State Administrator Access Required
+        </h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          District Management is restricted to Eastern Railway State Administrators.
+        </p>
+      </div>
+    );
+  }
 
   const filteredDistricts = districts.filter((d) => {
     return (

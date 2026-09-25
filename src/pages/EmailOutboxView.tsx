@@ -17,13 +17,18 @@ import {
 } from "lucide-react";
 
 export const EmailOutboxView: React.FC = () => {
-  const { syncEventTimestamp } = useAuth();
+  const { user, syncEventTimestamp } = useAuth();
   const [emails, setEmails] = useState<EmailLogRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeEmail, setActiveEmail] = useState<EmailLogRecord | null>(null);
 
   const fetchEmails = async () => {
+    if (!user || user.role !== "STATE_ADMIN") {
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const data = await api.getEmailLogs();
@@ -37,7 +42,23 @@ export const EmailOutboxView: React.FC = () => {
 
   useEffect(() => {
     fetchEmails();
-  }, [syncEventTimestamp]);
+  }, [syncEventTimestamp, user?.role]);
+
+  if (user && user.role !== "STATE_ADMIN") {
+    return (
+      <div className="p-8 max-w-xl mx-auto text-center space-y-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm mt-8">
+        <div className="w-14 h-14 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center text-amber-600 border border-amber-200 dark:border-amber-800 mx-auto">
+          <Mail className="w-6 h-6 text-amber-600" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
+          State Administrator Access Required
+        </h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Email Outbox is restricted to Eastern Railway State Administrators.
+        </p>
+      </div>
+    );
+  }
 
   const filteredEmails = emails.filter((em) => {
     return (

@@ -1,14 +1,26 @@
 import express from "express";
 import http from "http";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { getDb, ensureCurrentFinancialYear } from "./server/db.js";
 import { apiRouter } from "./server/routes.js";
 
+// Global error handlers to prevent unexpected process exits and restart loops in production
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception thrown:", error);
+});
+
 async function startServer() {
   const app = express();
   const httpServer = http.createServer(app);
-  const PORT = 3000;
+  
+  // Use Hostinger-provided PORT environment variable; fallback to 3000 for local development
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Support up to 25MB JSON payload for document PDFs and logo images
   app.use(express.json({ limit: "25mb" }));
@@ -31,13 +43,23 @@ async function startServer() {
     console.error("Failed to initialize ERBSG Database:", err);
   }
 
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({
+  // Lightweight Health Check endpoint (accessible without authentication)
+  app.get(["/api/health", "/health"], async (req, res) => {
+    let dbStatus = "connected";
+    try {
+      const db = await getDb();
+      if (!db) dbStatus = "degraded";
+    } catch {
+      dbStatus = "error";
+    }
+
+    res.status(200).json({
       status: "ok",
+      database: dbStatus,
       app: "ERBSG Data Control Portal",
       state: "Eastern Railway",
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
     });
   });
 
@@ -49,7 +71,7 @@ async function startServer() {
     res.status(404).json({ error: `API route ${req.method} ${req.path} not found` });
   });
 
-  // Vite middleware setup
+  // Vite middleware setup in development; static production assets in production
   if (process.env.NODE_ENV !== "production") {
     if (process.env.APPLET_ID || process.env.GOOGLE_RUNTIME) {
       if (process.env.DISABLE_HMR === undefined) {
@@ -64,8 +86,8 @@ async function startServer() {
           ? false
           : {
               server: httpServer,
-              port: 3000,
-              clientPort: 3000,
+              port: PORT,
+              clientPort: PORT,
             },
         ws: isHmrDisabled ? false : undefined,
       },
@@ -73,15 +95,31 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    // Production: locate built Vite dist assets reliably
+    const currentDir = typeof __dirname !== "undefined" ? __dirname : process.cwd();
+    const possibleDistPaths = [
+      path.join(process.cwd(), "dist"),
+      path.join(currentDir, "../dist"),
+      path.join(currentDir, "dist"),
+      currentDir,
+    ];
+    let distPath = path.join(process.cwd(), "dist");
+    for (const candidate of possibleDistPaths) {
+      if (fs.existsSync(path.join(candidate, "index.html"))) {
+        distPath = candidate;
+        break;
+      }
+    }
+
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
+  // Ensure server listens on 0.0.0.0 and process.env.PORT
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`ERBSG Portal Server running at http://0.0.0.0:${PORT}`);
+    console.log(`ERBSG Portal Server running at http://0.0.0.0:${PORT} (env: ${process.env.NODE_ENV || "development"})`);
   });
 }
 
