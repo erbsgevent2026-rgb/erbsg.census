@@ -208,3 +208,59 @@ export interface DeadlineRecord {
   status: "OPEN" | "UPCOMING" | "EXPIRED";
   notes: string | null;
 }
+
+export interface CensusConfirmation {
+  id?: string;
+  district_id: string;
+  year_id: string;
+  is_confirmed: boolean;
+  confirmed_at: string | null;
+  confirmed_by?: string | null;
+  confirmed_by_name?: string | null;
+  confirmed_by_bsg_id?: string | null;
+}
+
+export interface SessionSummaryRecord {
+  id: string;
+  label: string;
+  is_current: boolean;
+  status: string;
+  total_districts: number;
+  total_members: number;
+  youth_members: number;
+  unit_leaders: number;
+  professionals_staff: number;
+  total_units: number;
+  confirmed_districts: number;
+  annual_reports_count: number;
+  census_reports_count: number;
+  audited_statements_count: number;
+  deadline_date: string | null;
+  deadline_status: string;
+}
+
+export type SupportCategory = "SUPPORT" | "ISSUE" | "DATA_AMENDMENT" | "FEEDBACK";
+export type SupportPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
+export type SupportStatus = "NEW" | "IN_PROGRESS" | "RESOLVED";
+
+export interface SupportTicket {
+  id: string;
+  state_id: string;
+  district_id: string;
+  district_name: string;
+  user_id: string;
+  user_name: string;
+  bsg_id: string;
+  user_email: string | null;
+  category: SupportCategory;
+  priority: SupportPriority;
+  subject: string;
+  message: string;
+  status: SupportStatus;
+  admin_reply: string | null;
+  admin_replied_at: string | null;
+  admin_replied_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

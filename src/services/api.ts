@@ -10,7 +10,9 @@ import {
   DistrictUserRecord,
   AuditLogRecord,
   EmailLogRecord,
-  DeadlineRecord
+  DeadlineRecord,
+  CensusConfirmation,
+  SupportTicket
 } from "../types";
 
 const TOKEN_KEY = "erbsg_auth_token";
@@ -63,6 +65,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
             clearStoredToken();
             window.dispatchEvent(new CustomEvent("erbsg_auth_expired"));
           }
+        }
+        if (response.status === 503 && data.maintenanceMode) {
+          window.dispatchEvent(new CustomEvent("erbsg_maintenance_mode", { detail: data }));
         }
         throw new Error(data.error || `Request failed with status ${response.status}`);
       }
@@ -145,16 +150,30 @@ export const api = {
 
   // Members
   getMembers: (districtId: string, yearId: string) =>
-    request<{ data: MemberCounts; deadline: DeadlineRecord }>(`/members?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
+    request<{ data: MemberCounts; deadline: DeadlineRecord; confirmation?: CensusConfirmation }>(`/members?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
   saveMembers: (districtId: string, yearId: string, categories: any) =>
     request<{ message: string; totals: any }>("/members", {
       method: "PUT",
       body: JSON.stringify({ district_id: districtId, year_id: yearId, categories })
     }),
 
+  // Census Confirmation & Locking
+  getCensusConfirmation: (districtId: string, yearId: string) =>
+    request<CensusConfirmation>(`/census-confirmation?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
+  confirmCensus: (districtId: string, yearId: string) =>
+    request<{ success: boolean; message: string; confirmation: CensusConfirmation }>("/census-confirmation", {
+      method: "POST",
+      body: JSON.stringify({ district_id: districtId, year_id: yearId })
+    }),
+  unlockCensus: (districtId: string, yearId: string) =>
+    request<{ success: boolean; message: string }>("/census-confirmation/unlock", {
+      method: "POST",
+      body: JSON.stringify({ district_id: districtId, year_id: yearId })
+    }),
+
   // Unit Details
   getUnitDetails: (districtId: string, yearId: string) =>
-    request<{ data: UnitDetails }>(`/unit-details?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
+    request<{ data: UnitDetails; confirmation?: CensusConfirmation }>(`/unit-details?district_id=${encodeURIComponent(districtId)}&year_id=${encodeURIComponent(yearId)}`),
   saveUnitDetails: (districtId: string, yearId: string, units: Partial<UnitDetails>) =>
     request<{ message: string }>("/unit-details", {
       method: "PUT",
@@ -227,11 +246,59 @@ export const api = {
 
   // Years & Deadlines
   getYears: () => request<AcademicYear[]>("/years"),
-  addYear: (label: string) => request<{ message: string }>("/years", { method: "POST", body: JSON.stringify({ label }) }),
+  createSessionYear: (payload: { label: string; set_as_current?: boolean }) =>
+    request<{ success: boolean; message: string; year: AcademicYear }>("/years", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  setActiveSessionYear: (yearId: string) =>
+    request<{ success: boolean; message: string }>(`/years/${encodeURIComponent(yearId)}/set-current`, {
+      method: "PUT"
+    }),
+  getSessionsSummary: () =>
+    request<any[]>("/sessions/summary"),
   getDeadlines: () => request<DeadlineRecord[]>("/deadlines"),
   updateDeadline: (payload: any) => request<{ message: string }>("/deadlines", { method: "PUT", body: JSON.stringify(payload) }),
 
   // Audit Logs & Emails
   getAuditLogs: () => request<AuditLogRecord[]>("/audit-logs"),
   getEmailLogs: () => request<EmailLogRecord[]>("/email-logs"),
+
+  // System Settings & Maintenance Mode
+  getMaintenanceStatus: () =>
+    request<{ maintenanceMode: boolean; message: string; updatedAt: string; updatedBy: string }>(
+      "/system/maintenance"
+    ),
+  setMaintenanceMode: (enabled: boolean, message?: string) =>
+    request<{ success: boolean; maintenanceMode: boolean; message: string; updatedAt: string; updatedBy: string }>(
+      "/system/maintenance",
+      { method: "POST", body: JSON.stringify({ enabled, message }) }
+    ),
+
+  // Support & Feedback System
+  getSupportTickets: (params?: { district_id?: string; status?: string; search?: string }) => {
+    const sp = new URLSearchParams();
+    if (params?.district_id && params.district_id !== "ALL") sp.append("district_id", params.district_id);
+    if (params?.status && params.status !== "ALL") sp.append("status", params.status);
+    if (params?.search) sp.append("search", params.search);
+    const qs = sp.toString() ? `?${sp.toString()}` : "";
+    return request<SupportTicket[]>(`/support${qs}`);
+  },
+  getSupportTicket: (id: string) => request<SupportTicket>(`/support/${encodeURIComponent(id)}`),
+  submitSupportTicket: (payload: {
+    category: string;
+    priority: string;
+    subject: string;
+    message: string;
+    district_id?: string;
+  }) =>
+    request<{ success: boolean; message: string; ticket: SupportTicket }>("/support", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateSupportTicket: (id: string, payload: { status: string; admin_reply?: string }) =>
+    request<{ success: boolean; message: string; ticket: SupportTicket }>(`/support/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }),
 };

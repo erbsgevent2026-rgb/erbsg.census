@@ -9,7 +9,8 @@ import {
   Building2,
   Calendar,
   CheckCircle2,
-  ChevronDown
+  ChevronDown,
+  PlusCircle
 } from "lucide-react";
 
 interface HeaderProps {
@@ -66,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileNav, onNavigate }) =
           {/* Year Selector */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-xs">
             <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 mr-1.5 shrink-0" />
-            <span className="hidden xl:inline text-slate-500 dark:text-slate-400 mr-1 text-[11px]">Year:</span>
+            <span className="hidden xl:inline text-slate-500 dark:text-slate-400 mr-1 text-[11px]">Session:</span>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(e.target.value)}
@@ -75,10 +76,21 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileNav, onNavigate }) =
             >
               {availableYears.map((yr) => (
                 <option key={yr.id} value={yr.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                  {yr.label}
+                  {yr.label} {yr.is_current ? "★ (Active)" : ""}
                 </option>
               ))}
             </select>
+            {user?.role === "STATE_ADMIN" && (
+              <button
+                type="button"
+                onClick={() => onNavigate("session-years")}
+                className="ml-1.5 p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400 rounded transition cursor-pointer"
+                title="Manage Sessions & Create New Session Year"
+                aria-label="Manage session years"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* User Role Badge */}

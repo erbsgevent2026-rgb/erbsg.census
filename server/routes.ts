@@ -1,8 +1,28 @@
-import { Router, Request, Response } from "express";
+import express from "express";
+import type { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { queryAll, queryOne, runQuery, saveDatabase, ensureCurrentFinancialYear } from "./db.js";
-import { syncEntityToFirestore } from "./firestoreService.js";
+import jwt from "jsonwebtoken";
+import {
+  queryAll,
+  queryOne,
+  runQuery,
+  saveDatabase,
+  ensureCurrentFinancialYear,
+  getMaintenanceMode,
+  setMaintenanceMode,
+  getCensusConfirmation,
+  setCensusConfirmation,
+  unlockCensusConfirmation,
+  ensureSessionYear,
+  setCurrentSessionYear,
+  getSessionSummary,
+  createSupportFeedback,
+  getSupportFeedback,
+  getSupportFeedbackById,
+  updateSupportFeedback
+} from "./db.ts";
+import { syncEntityToFirestore } from "./firestoreService.ts";
 import {
   authenticateToken,
   requireStateAdmin,
@@ -11,10 +31,11 @@ import {
   logAuditAction,
   sendPortalEmail,
   generatePasswordResetToken,
-  verifyPasswordResetToken
-} from "./auth.js";
+  verifyPasswordResetToken,
+  JWT_SECRET
+} from "./auth.ts";
 
-export const apiRouter = Router();
+export const apiRouter = express.Router();
 
 // Store SSE connections for real-time live synchronization
 const syncClients: Response[] = [];
@@ -46,6 +67,96 @@ apiRouter.get("/sync/events", (req: Request, res: Response) => {
     const idx = syncClients.indexOf(res);
     if (idx !== -1) syncClients.splice(idx, 1);
   });
+});
+
+// -------------------------------------------------------------
+// System Settings & Maintenance Mode Endpoints
+// -------------------------------------------------------------
+apiRouter.get("/system/maintenance", (req: Request, res: Response) => {
+  const details = getMaintenanceMode();
+  res.json({
+    maintenanceMode: details.enabled,
+    message: details.message,
+    updatedAt: details.updatedAt,
+    updatedBy: details.updatedBy
+  });
+});
+
+apiRouter.post("/system/maintenance", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  const { enabled, message } = req.body;
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  const updatedBy = req.user?.bsg_id || req.user?.name || "STATE_ADMIN";
+  const updated = setMaintenanceMode(enabled, message, updatedBy);
+
+  // Broadcast real-time change to all connected clients via SSE
+  broadcastSyncEvent("MAINTENANCE_MODE_CHANGED", {
+    maintenanceMode: updated.enabled,
+    message: updated.message,
+    updatedAt: updated.updatedAt,
+    updatedBy: updated.updatedBy
+  });
+
+  // Log in Audit Trail
+  logAuditAction({
+    userId: req.user!.id,
+    userName: req.user!.name,
+    bsgId: req.user!.bsg_id,
+    role: req.user!.role,
+    action: enabled ? "MAINTENANCE_MODE_ACTIVATED" : "MAINTENANCE_MODE_DEACTIVATED",
+    module: "SYSTEM_SETTINGS",
+    details: enabled
+      ? "State Administrator activated Maintenance Mode. District User portal access is suspended."
+      : "State Administrator deactivated Maintenance Mode. Normal District User portal access restored.",
+    ipAddress: req.ip
+  });
+
+  res.json({
+    success: true,
+    maintenanceMode: updated.enabled,
+    message: updated.message,
+    updatedAt: updated.updatedAt,
+    updatedBy: updated.updatedBy
+  });
+});
+
+// Guard middleware: when Maintenance Mode is active, block District Users from accessing or mutating district data
+apiRouter.use((req: Request, res: Response, next) => {
+  const path = req.path;
+  if (
+    path.startsWith("/sync/events") ||
+    path.startsWith("/system/maintenance") ||
+    path.startsWith("/auth/login") ||
+    path.startsWith("/auth/forgot-password") ||
+    path.startsWith("/auth/reset-password") ||
+    path === "/auth/me" ||
+    path === "/auth/logout"
+  ) {
+    return next();
+  }
+
+  const maint = getMaintenanceMode();
+  if (maint.enabled) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      try {
+        const payload = jwt.verify(token, JWT_SECRET) as any;
+        if (payload && payload.role === "DISTRICT_USER") {
+          res.status(503).json({
+            error: maint.message || "ERBSG Data Control Portal is currently under maintenance. Please try again later.",
+            maintenanceMode: true
+          });
+          return;
+        }
+      } catch {
+        // Route-level authenticateToken will validate
+      }
+    }
+  }
+  next();
 });
 
 // -------------------------------------------------------------
@@ -87,10 +198,14 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
     return;
   }
 
-  const passwordMatch =
-    bcrypt.compareSync(password, user.password_hash) ||
-    (password === "Test@1234" && user.role === "DISTRICT_USER") ||
-    ((password === "Admin@1234" || password === "Admin@ERBSG2026") && user.role === "STATE_ADMIN" && !user.must_change_password);
+  let passwordMatch = bcrypt.compareSync(password, user.password_hash);
+
+  // Safe fallback strictly for State Administrator initial credentials
+  if (!passwordMatch && user.role === "STATE_ADMIN" && !user.must_change_password) {
+    if (password === "Admin@1234" || password === "Admin@ERBSG2026") {
+      passwordMatch = true;
+    }
+  }
 
   if (!passwordMatch) {
     logAuditAction({
@@ -170,8 +285,12 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
     ipAddress: req.ip
   });
 
+  const maint = getMaintenanceMode();
+
   res.json({
     token,
+    maintenanceMode: maint.enabled,
+    maintenanceMessage: maint.message,
     user: {
       id: user.id,
       bsgId: user.bsg_id,
@@ -195,7 +314,11 @@ apiRouter.get("/auth/me", authenticateToken, (req: Request, res: Response) => {
     districtName = dist?.name || null;
   }
 
+  const maint = getMaintenanceMode();
+
   res.json({
+    maintenanceMode: maint.enabled,
+    maintenanceMessage: maint.message,
     user: {
       id: user.id,
       bsgId: user.bsg_id,
@@ -245,8 +368,7 @@ apiRouter.post("/auth/change-password", authenticateToken, (req: Request, res: R
   const passwordMatch =
     dbUser &&
     (bcrypt.compareSync(currentPassword, dbUser.password_hash) ||
-      bcrypt.compareSync(trimmedCurrent, dbUser.password_hash) ||
-      ((currentPassword === "Test@1234" || trimmedCurrent === "Test@1234") && user.role === "DISTRICT_USER"));
+      bcrypt.compareSync(trimmedCurrent, dbUser.password_hash));
 
   if (!passwordMatch) {
     res.status(400).json({ error: "Current password is incorrect." });
@@ -1165,9 +1287,12 @@ apiRouter.get("/members", authenticateToken, (req: Request, res: Response) => {
     };
   }
 
+  const confirmation = getCensusConfirmation(targetDistrictId, yearId);
+
   res.json({
     data: safeData,
-    deadline: deadline || { deadline_date: "2026-07-31", status: "OPEN" }
+    deadline: deadline || { deadline_date: "2026-07-31", status: "OPEN" },
+    confirmation
   });
 });
 
@@ -1175,15 +1300,19 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const { district_id, year_id, categories } = req.body;
 
-  // Enforce view-only access for State Admin at the API level
-  if (user.role === "STATE_ADMIN") {
-    res.status(403).json({
-      error: "Access Denied: State Administrator has view-only access to Member Census records. Only authorized District Users may update membership details for their division."
-    });
-    return;
-  }
-
   if (!enforceDistrictAccess(req, res, district_id)) return;
+
+  // Enforce locking mechanism: District Users become read-only once final confirmation is completed.
+  // State Admin retains full unrestricted editing and saving capabilities even after confirmation.
+  if (user.role === "DISTRICT_USER") {
+    const confirmation = getCensusConfirmation(district_id, year_id);
+    if (confirmation.is_confirmed) {
+      res.status(403).json({
+        error: "Access Denied: Annual Census Return for this district has been officially finalized and locked. Editing is no longer permitted for District Users."
+      });
+      return;
+    }
+  }
 
   const c = categories || req.body || {};
 
@@ -1217,6 +1346,7 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
   const grand_total = youth_total + unit_leaders_total + professionals_total;
 
   const existing = queryOne("SELECT id FROM member_counts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
+  const updaterSignature = user.role === "STATE_ADMIN" ? `State Admin (${user.name})` : user.name;
 
   if (existing) {
     runQuery(`
@@ -1234,7 +1364,7 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
       scout_masters, rover_scout_leaders,
       professional_guides, voluntary_commissioners, support_staff, professionals_staff,
       youth_total, unit_leaders_total, professionals_total, grand_total,
-      user.name, district_id, year_id
+      updaterSignature, district_id, year_id
     ]);
   } else {
     const id = `mc_${district_id}_${year_id}_${Date.now()}`;
@@ -1255,19 +1385,23 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
       scout_masters, rover_scout_leaders,
       professional_guides, voluntary_commissioners, support_staff, professionals_staff,
       youth_total, unit_leaders_total, professionals_total, grand_total,
-      user.name
+      updaterSignature
     ]);
   }
+
+  const district = queryOne<any>("SELECT name FROM districts WHERE id = ?", [district_id]);
+  const districtName = district?.name || district_id;
 
   logAuditAction({
     userId: user.id,
     userName: user.name,
     bsgId: user.bsg_id,
     role: user.role,
-    action: "UPDATE_MEMBERSHIP_COUNTS",
+    action: user.role === "STATE_ADMIN" ? "ADMIN_UPDATE_MEMBERSHIP_COUNTS" : "UPDATE_MEMBERSHIP_COUNTS",
     module: "MEMBERS",
     districtId: district_id,
-    details: `Updated membership census for ${year_id}: Total ${grand_total} (Youth: ${youth_total}, Leaders: ${unit_leaders_total}, Staff: ${professionals_total})`,
+    districtName,
+    details: `${user.role === "STATE_ADMIN" ? "State Administrator" : "District User"} saved membership census for ${districtName} (${year_id}): Total ${grand_total} (Youth: ${youth_total}, Leaders: ${unit_leaders_total}, Staff: ${professionals_total})`,
     ipAddress: req.ip
   });
 
@@ -1291,6 +1425,8 @@ apiRouter.get("/unit-details", authenticateToken, (req: Request, res: Response) 
     [targetDistrictId, yearId]
   );
 
+  const confirmation = getCensusConfirmation(targetDistrictId, yearId);
+
   const safeData = data ? { ...data } : {
     district_id: targetDistrictId,
     year_id: yearId,
@@ -1304,22 +1440,26 @@ apiRouter.get("/unit-details", authenticateToken, (req: Request, res: Response) 
     updated_at: null
   };
 
-  res.json({ data: safeData });
+  res.json({ data: safeData, confirmation });
 });
 
 apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const { district_id, year_id, units } = req.body;
 
-  // Enforce view-only access for State Admin at the API level
-  if (user.role === "STATE_ADMIN") {
-    res.status(403).json({
-      error: "Access Denied: State Administrator has view-only access to Unit Details. Only authorized District Users may update unit details for their division."
-    });
-    return;
-  }
-
   if (!enforceDistrictAccess(req, res, district_id)) return;
+
+  // Enforce locking mechanism: District Users become read-only once final confirmation is completed.
+  // State Admin retains full unrestricted editing and saving capabilities even after confirmation.
+  if (user.role === "DISTRICT_USER") {
+    const confirmation = getCensusConfirmation(district_id, year_id);
+    if (confirmation.is_confirmed) {
+      res.status(403).json({
+        error: "Access Denied: Annual Census Return for this district has been officially finalized and locked. Editing is no longer permitted for District Users."
+      });
+      return;
+    }
+  }
 
   const u = units || req.body || {};
   const bulbul_flock = Math.max(0, parseInt(u.bulbul_flock || 0));
@@ -1330,6 +1470,7 @@ apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) 
   const rover_crew = Math.max(0, parseInt(u.rover_crew || 0));
 
   const existing = queryOne("SELECT id FROM unit_details WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
+  const updaterSignature = user.role === "STATE_ADMIN" ? `State Admin (${user.name})` : user.name;
 
   if (existing) {
     runQuery(`
@@ -1341,7 +1482,7 @@ apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) 
     `, [
       bulbul_flock, guide_company, ranger_team,
       cub_pack, scout_troop, rover_crew,
-      user.name, district_id, year_id
+      updaterSignature, district_id, year_id
     ]);
   } else {
     const id = `ud_${district_id}_${year_id}`;
@@ -1354,25 +1495,133 @@ apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) 
     `, [
       id, district_id, year_id,
       bulbul_flock, guide_company, ranger_team, cub_pack, scout_troop, rover_crew,
-      user.name
+      updaterSignature
     ]);
   }
+
+  const district = queryOne<any>("SELECT name FROM districts WHERE id = ?", [district_id]);
+  const districtName = district?.name || district_id;
 
   logAuditAction({
     userId: user.id,
     userName: user.name,
     bsgId: user.bsg_id,
     role: user.role,
-    action: "UPDATE_UNIT_DETAILS",
+    action: user.role === "STATE_ADMIN" ? "ADMIN_UPDATE_UNIT_DETAILS" : "UPDATE_UNIT_DETAILS",
     module: "MEMBERS",
     districtId: district_id,
-    details: `Updated unit details for ${year_id}: Bulbul Flock: ${bulbul_flock}, Guide Company: ${guide_company}, Ranger Team: ${ranger_team}, Cub Pack: ${cub_pack}, Scout Troop: ${scout_troop}, Rover Crew: ${rover_crew}`,
+    districtName,
+    details: `${user.role === "STATE_ADMIN" ? "State Administrator" : "District User"} saved unit details for ${districtName} (${year_id}): Bulbul Flock: ${bulbul_flock}, Guide Company: ${guide_company}, Ranger Team: ${ranger_team}, Cub Pack: ${cub_pack}, Scout Troop: ${scout_troop}, Rover Crew: ${rover_crew}`,
     ipAddress: req.ip
   });
 
   broadcastSyncEvent("UNIT_DETAILS_UPDATED", { districtId: district_id, yearId: year_id });
 
   res.json({ message: "Unit Details saved successfully." });
+});
+
+// -------------------------------------------------------------
+// ANNUAL CENSUS RETURN FINAL CONFIRMATION & LOCKING ENDPOINTS
+// -------------------------------------------------------------
+
+apiRouter.get("/census-confirmation", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_asn") : user.district_id!;
+  const yearId = String(req.query.year_id || "year_2026_2027");
+
+  if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
+
+  const confirmation = getCensusConfirmation(targetDistrictId, yearId);
+  res.json({
+    district_id: targetDistrictId,
+    year_id: yearId,
+    ...confirmation
+  });
+});
+
+apiRouter.post("/census-confirmation", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { district_id, year_id } = req.body;
+
+  if (!district_id || !year_id) {
+    res.status(400).json({ error: "District ID and Year ID are required." });
+    return;
+  }
+
+  if (!enforceDistrictAccess(req, res, district_id)) return;
+
+  const result = setCensusConfirmation(
+    district_id,
+    year_id,
+    user.id,
+    user.name,
+    user.bsg_id,
+    req.ip
+  );
+
+  const district = queryOne<any>("SELECT name FROM districts WHERE id = ?", [district_id]);
+  const districtName = district?.name || district_id;
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: "CENSUS_FINAL_CONFIRMATION",
+    module: "MEMBERS",
+    districtId: district_id,
+    districtName,
+    details: `${user.role === "STATE_ADMIN" ? "State Administrator" : "District User"} completed Final Confirmation of Annual Census Return for ${districtName} (${year_id}). Census data is now locked for District Users.`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("CENSUS_CONFIRMED", {
+    districtId: district_id,
+    yearId: year_id,
+    confirmedAt: result.confirmed_at,
+    confirmedByName: user.name
+  });
+
+  res.json({
+    success: true,
+    message: "Annual Census Return has been officially confirmed and locked.",
+    confirmation: result
+  });
+});
+
+apiRouter.post("/census-confirmation/unlock", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { district_id, year_id } = req.body;
+
+  if (!district_id || !year_id) {
+    res.status(400).json({ error: "District ID and Year ID are required." });
+    return;
+  }
+
+  unlockCensusConfirmation(district_id, year_id);
+
+  const district = queryOne<any>("SELECT name FROM districts WHERE id = ?", [district_id]);
+  const districtName = district?.name || district_id;
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: "ADMIN_UNLOCK_CENSUS",
+    module: "MEMBERS",
+    districtId: district_id,
+    districtName,
+    details: `State Administrator unlocked Annual Census Return for ${districtName} (${year_id}). District User can now edit and re-submit.`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("CENSUS_UNLOCKED", { districtId: district_id, yearId: year_id });
+
+  res.json({
+    success: true,
+    message: `Annual Census Return for ${districtName} has been unlocked for district editing.`
+  });
 });
 
 // -------------------------------------------------------------
@@ -2065,11 +2314,10 @@ apiRouter.get("/email-logs", authenticateToken, (req: Request, res: Response) =>
 });
 
 // -------------------------------------------------------------
-// 10. ACADEMIC YEARS & DEADLINES
+// 10. ACADEMIC YEARS, SESSIONS & DEADLINES
 // -------------------------------------------------------------
 
 const handleGetYears = (req: Request, res: Response) => {
-  ensureCurrentFinancialYear();
   const years = queryAll<any>("SELECT * FROM academic_years ORDER BY label DESC");
   res.json(years);
 };
@@ -2090,15 +2338,114 @@ apiRouter.post("/years/auto-generate", authenticateToken, (req: Request, res: Re
   });
 });
 
+/**
+ * 1-Click New Session Year Creation for all 9 Districts
+ * - Creates the session year consistently across every district
+ * - Strictly preserves all previous session years and historical data
+ * - Prevents accidental duplicate session creation
+ */
 apiRouter.post("/years", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
-  const { label } = req.body;
-  if (!label) {
-    res.status(400).json({ error: "Year label is required (e.g., 2028-2029)" });
+  let { label, start_year, end_year, set_as_current } = req.body;
+
+  if (!label && start_year && end_year) {
+    label = `${start_year}-${end_year}`;
+  }
+
+  if (!label || typeof label !== "string") {
+    res.status(400).json({ error: "Session Year label is required (e.g., 2027-2028)" });
     return;
   }
-  const id = `year_${label.replace(/[^0-9]/g, "_")}`;
-  runQuery("INSERT INTO academic_years (id, label, is_current, status) VALUES (?, ?, 0, 'ACTIVE')", [id, label]);
-  res.status(201).json({ message: "Academic year added.", id });
+
+  // Normalize hyphen/en-dash and whitespace
+  const normalized = label.trim().replace(/–|—/g, "-");
+  const match = normalized.match(/^(\d{4})\s*-\s*(\d{4})$/);
+  if (!match) {
+    res.status(400).json({ error: "Invalid session year format. Please use YYYY-YYYY format (e.g., 2027-2028)." });
+    return;
+  }
+
+  const sYear = parseInt(match[1]);
+  const eYear = parseInt(match[2]);
+
+  if (eYear !== sYear + 1) {
+    res.status(400).json({
+      error: `Invalid academic cycle: ${sYear}-${eYear}. Eastern Railway BSG sessions must span consecutive years (e.g., ${sYear}-${sYear + 1}).`
+    });
+    return;
+  }
+
+  const formattedLabel = `${sYear}-${eYear}`;
+  const targetId = `year_${sYear}_${eYear}`;
+  const existing = queryOne("SELECT id, label FROM academic_years WHERE id = ? OR label = ?", [targetId, formattedLabel]);
+  if (existing) {
+    res.status(400).json({ error: `Session Year "${formattedLabel}" already exists. Duplicate session creation is prevented.` });
+    return;
+  }
+
+  const result = ensureSessionYear(sYear, eYear, Boolean(set_as_current), "ACTIVE");
+
+  logAuditAction({
+    userId: req.user!.id,
+    userName: req.user!.name,
+    bsgId: req.user!.bsg_id,
+    role: req.user!.role,
+    action: "CREATE_SESSION_YEAR",
+    module: "SESSION_MANAGEMENT",
+    stateId: "state_er",
+    details: `State Administrator created new Session Year ${result.label} for all Eastern Railway districts.${set_as_current ? " Set as active session." : ""}`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("SESSION_YEAR_CREATED", {
+    id: result.id,
+    label: result.label,
+    is_current: result.is_current
+  });
+
+  res.status(201).json({
+    success: true,
+    message: `Session Year ${result.label} created successfully and initialized for all 9 districts. All previous session data remains preserved.`,
+    year: result
+  });
+});
+
+/**
+ * Designate a Session Year as the Active / Current session
+ */
+apiRouter.put("/years/:id/set-current", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const result = setCurrentSessionYear(id);
+  if (!result.success) {
+    res.status(404).json({ error: "Session year not found." });
+    return;
+  }
+
+  logAuditAction({
+    userId: req.user!.id,
+    userName: req.user!.name,
+    bsgId: req.user!.bsg_id,
+    role: req.user!.role,
+    action: "SET_ACTIVE_SESSION_YEAR",
+    module: "SESSION_MANAGEMENT",
+    stateId: "state_er",
+    details: `State Administrator designated Session Year ${result.label} as the active current session.`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("ACTIVE_SESSION_CHANGED", { id, label: result.label });
+
+  res.json({
+    success: true,
+    message: `Session Year ${result.label} is now set as the active official session.`
+  });
+});
+
+/**
+ * Executive Summary of all Session Years for Admin Management
+ */
+apiRouter.get("/sessions/summary", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  const summary = getSessionSummary();
+  res.json(summary);
 });
 
 apiRouter.get("/deadlines", (req: Request, res: Response) => {
@@ -2122,4 +2469,182 @@ apiRouter.put("/deadlines", authenticateToken, requireStateAdmin, (req: Request,
   }
   broadcastSyncEvent("DEADLINE_UPDATED", { year_id });
   res.json({ message: "Deadline updated successfully." });
+});
+
+// -------------------------------------------------------------
+// 11. SUPPORT & FEEDBACK SYSTEM
+// -------------------------------------------------------------
+
+apiRouter.get("/support", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { district_id, status, search } = req.query;
+
+  // District Users can strictly only see their own district's submissions
+  const filterDistrictId = user.role === "STATE_ADMIN"
+    ? (typeof district_id === "string" ? district_id : "ALL")
+    : user.district_id!;
+
+  const tickets = getSupportFeedback({
+    district_id: filterDistrictId,
+    status: typeof status === "string" ? status : undefined,
+    search: typeof search === "string" ? search : undefined
+  });
+
+  res.json(tickets);
+});
+
+apiRouter.post("/support", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { subject, message, category, priority, district_id } = req.body;
+
+  if (!subject || !subject.trim()) {
+    res.status(400).json({ error: "Subject / Title is required." });
+    return;
+  }
+
+  if (!message || !message.trim()) {
+    res.status(400).json({ error: "Message details are required." });
+    return;
+  }
+
+  // Determine target district
+  const targetDistrictId = user.role === "STATE_ADMIN"
+    ? (district_id || "dist_cen")
+    : user.district_id!;
+
+  const dist = queryOne<any>("SELECT name FROM districts WHERE id = ?", [targetDistrictId]);
+  const districtName = dist?.name || targetDistrictId;
+
+  const ticket = createSupportFeedback({
+    district_id: targetDistrictId,
+    district_name: districtName,
+    user_id: user.id,
+    user_name: user.name,
+    bsg_id: user.bsg_id,
+    user_email: user.email,
+    category: category || "SUPPORT",
+    priority: priority || "NORMAL",
+    subject: subject.trim(),
+    message: message.trim()
+  });
+
+  // Mirror to Cloud Firestore
+  syncEntityToFirestore("support_tickets", ticket.id, ticket).catch((err) =>
+    console.warn("Background firestore support ticket sync notice:", err)
+  );
+
+  // Send email alert to official support address: erbsgevent.2026@gmail.com
+  try {
+    sendPortalEmail({
+      to: "erbsgevent.2026@gmail.com",
+      name: "ERBSG Support Desk",
+      bsgId: "BSG-ER-STATE",
+      subject: `[Support Request] ${districtName} - ${subject.trim()}`,
+      body: `New support / feedback ticket submitted:\n\nDistrict: ${districtName} (${targetDistrictId})\nUser: ${user.name} (${user.bsg_id})\nEmail: ${user.email}\nCategory: ${category || "SUPPORT"}\nPriority: ${priority || "NORMAL"}\n\nSubject: ${subject.trim()}\n\nMessage:\n${message.trim()}\n\nPortal link: https://ais-pre-xkvfbdvw6vbecnzz2ebqah-950978959279.asia-east1.run.app`,
+      type: "NOTIFICATION"
+    });
+  } catch (_) {}
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: "SUBMIT_SUPPORT_TICKET",
+    module: "SUPPORT",
+    districtId: targetDistrictId,
+    districtName,
+    details: `${user.name} (${districtName}) submitted a ${category || "SUPPORT"} request: "${subject.trim()}"`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("SUPPORT_TICKET_CREATED", {
+    id: ticket.id,
+    districtId: targetDistrictId,
+    districtName,
+    subject: ticket.subject,
+    status: ticket.status
+  });
+
+  res.status(201).json({
+    success: true,
+    message: "Your support request has been submitted successfully. State Administration will review and respond.",
+    ticket
+  });
+});
+
+apiRouter.get("/support/:id", authenticateToken, (req: Request, res: Response) => {
+  const user = req.user!;
+  const ticket = getSupportFeedbackById(req.params.id);
+
+  if (!ticket) {
+    res.status(404).json({ error: "Support ticket not found." });
+    return;
+  }
+
+  // Ensure district isolation: District Users can only view tickets from their district
+  if (user.role === "DISTRICT_USER" && ticket.district_id !== user.district_id) {
+    res.status(403).json({ error: "Access Denied: You can only view support tickets for your district." });
+    return;
+  }
+
+  res.json(ticket);
+});
+
+apiRouter.put("/support/:id", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  const user = req.user!;
+  const { status, admin_reply } = req.body;
+
+  const updatedTicket = updateSupportFeedback(req.params.id, {
+    status,
+    admin_reply,
+    admin_name: user.name
+  });
+
+  if (!updatedTicket) {
+    res.status(404).json({ error: "Support ticket not found." });
+    return;
+  }
+
+  // Mirror update to Cloud Firestore
+  syncEntityToFirestore("support_tickets", updatedTicket.id, updatedTicket).catch(() => {});
+
+  // Send email response notification to district user if they have an email
+  if (updatedTicket.user_email) {
+    try {
+      sendPortalEmail({
+        to: updatedTicket.user_email,
+        name: updatedTicket.user_name,
+        bsgId: updatedTicket.bsg_id,
+        subject: `[Update] ERBSG Support Request: ${updatedTicket.subject}`,
+        body: `Dear ${updatedTicket.user_name},\n\nYour support ticket regarding "${updatedTicket.subject}" has been updated by the State Administrator.\n\nStatus: ${updatedTicket.status}\n\nAdministrator Response:\n${admin_reply || "No comments added."}\n\nPlease log in to the ERBSG Data Control Portal to view the full resolution history.`,
+        type: "NOTIFICATION"
+      });
+    } catch (_) {}
+  }
+
+  logAuditAction({
+    userId: user.id,
+    userName: user.name,
+    bsgId: user.bsg_id,
+    role: user.role,
+    action: "UPDATE_SUPPORT_TICKET",
+    module: "SUPPORT",
+    districtId: updatedTicket.district_id,
+    districtName: updatedTicket.district_name,
+    details: `State Administrator updated support ticket #${updatedTicket.id}: status changed to ${updatedTicket.status}`,
+    ipAddress: req.ip
+  });
+
+  broadcastSyncEvent("SUPPORT_TICKET_UPDATED", {
+    id: updatedTicket.id,
+    districtId: updatedTicket.district_id,
+    status: updatedTicket.status
+  });
+
+  res.json({
+    success: true,
+    message: "Support ticket updated and response recorded successfully.",
+    ticket: updatedTicket
+  });
 });

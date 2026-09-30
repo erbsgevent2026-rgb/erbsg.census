@@ -45,11 +45,14 @@ export async function getDb(): Promise<SqlJsDatabase> {
   }
 
   initSchemaAndSeed(dbInstance);
-  ensureCurrentFinancialYear();
+
+  // Ensure Session 2025-2026 and 2026-2027 exist for all 9 districts, preserving all historical data
+  ensureSessionYear(2025, 2026, false, "ACTIVE");
+  ensureSessionYear(2026, 2027, true, "ACTIVE");
 
   // Ensure state admin password and official email are synchronized
   try {
-    const adminHash = bcrypt.hashSync("Admin@1234", 10);
+    const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
     dbInstance.run(
       "UPDATE users SET password_hash = ?, email = 'erbsgevent2026@gmail.com' WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'",
       [adminHash]
@@ -99,34 +102,60 @@ export function getCurrentFinancialYear(now = new Date()): { startYear: number; 
   };
 }
 
-export function ensureCurrentFinancialYear(targetDate = new Date()): { id: string; label: string; created: boolean } {
-  if (!dbInstance) return { id: "year_2026_2027", label: "2026-2027", created: false };
-  const fy = getCurrentFinancialYear(targetDate);
-  const existing = queryOne<any>("SELECT id, is_current FROM academic_years WHERE id = ?", [fy.id]);
+/**
+ * Creates or ensures a session year is available for all 9 districts.
+ * Non-destructive: Existing district data is 100% preserved and never overwritten.
+ */
+export function ensureSessionYear(
+  startYear: number,
+  endYear: number,
+  isCurrent: boolean = false,
+  status: string = "ACTIVE"
+): { id: string; label: string; created: boolean; is_current: boolean } {
+  if (!dbInstance) {
+    return {
+      id: `year_${startYear}_${endYear}`,
+      label: `${startYear}-${endYear}`,
+      created: false,
+      is_current: isCurrent
+    };
+  }
+
+  const id = `year_${startYear}_${endYear}`;
+  const label = `${startYear}-${endYear}`;
+
+  const existing = queryOne<any>(
+    "SELECT id, label, is_current, status FROM academic_years WHERE id = ? OR label = ?",
+    [id, label]
+  );
+
   let created = false;
 
   if (!existing) {
     dbInstance.run(
-      "INSERT INTO academic_years (id, label, is_current, status) VALUES (?, ?, 1, 'ACTIVE')",
-      [fy.id, fy.label]
+      "INSERT INTO academic_years (id, label, is_current, status) VALUES (?, ?, ?, ?)",
+      [id, label, isCurrent ? 1 : 0, status]
     );
-    // Demote other years so only current FY is marked as current
-    dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [fy.id]);
 
-    // Create deadline for the new FY
-    const deadlineId = `dl_${fy.startYear}_${fy.endYear}`;
-    const deadlineDate = `${fy.startYear}-07-31`;
+    if (isCurrent) {
+      dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [id]);
+    }
+
+    // Create official deadline for this session
+    const deadlineId = `dl_${startYear}_${endYear}`;
+    const deadlineDate = `${startYear}-07-31`;
     dbInstance.run(
-      "INSERT OR IGNORE INTO deadlines (id, year_id, deadline_date, status, notes) VALUES (?, ?, ?, 'OPEN', 'Official annual census and member registration deadline')",
-      [deadlineId, fy.id, deadlineDate]
+      "INSERT OR IGNORE INTO deadlines (id, year_id, deadline_date, status, notes) VALUES (?, ?, ?, 'OPEN', ?)",
+      [deadlineId, id, deadlineDate, `Official annual census and statutory returns deadline for Session ${label}`]
     );
 
-    // Initialize base member count entries for all 9 districts so reports and dashboard immediately function
+    // Initialize base baseline entries for all 9 districts so historical/new views immediately function
     const districts = queryAll<any>("SELECT id FROM districts WHERE status = 'ACTIVE'");
     for (const d of districts) {
-      const checkMc = queryOne("SELECT id FROM member_counts WHERE district_id = ? AND year_id = ?", [d.id, fy.id]);
+      // 1. Member Counts (0 baseline)
+      const checkMc = queryOne("SELECT id FROM member_counts WHERE district_id = ? AND year_id = ?", [d.id, id]);
       if (!checkMc) {
-        const mcId = `mc_${d.id}_${fy.startYear}_${fy.endYear}`;
+        const mcId = `mc_${d.id}_${startYear}_${endYear}`;
         dbInstance.run(
           `INSERT INTO member_counts (
             id, state_id, district_id, year_id,
@@ -136,20 +165,394 @@ export function ensureCurrentFinancialYear(targetDate = new Date()): { id: strin
             professional_guides, voluntary_commissioners, support_staff, professionals_staff,
             youth_total, unit_leaders_total, professionals_total, grand_total,
             updated_by
-          ) VALUES (?, 'state_er', ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'Automatic Financial Year System')`,
-          [mcId, d.id, fy.id]
+          ) VALUES (?, 'state_er', ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'System Session Initialization')`,
+          [mcId, d.id, id]
+        );
+      }
+
+      // 2. Unit Details (0 baseline)
+      const checkUd = queryOne("SELECT id FROM unit_details WHERE district_id = ? AND year_id = ?", [d.id, id]);
+      if (!checkUd) {
+        const udId = `ud_${d.id}_${startYear}_${endYear}`;
+        dbInstance.run(
+          `INSERT INTO unit_details (
+            id, state_id, district_id, year_id,
+            bulbul_flock, guide_company, ranger_team, cub_pack, scout_troop, rover_crew,
+            updated_by
+          ) VALUES (?, 'state_er', ?, ?, 0, 0, 0, 0, 0, 0, 'System Session Initialization')`,
+          [udId, d.id, id]
         );
       }
     }
+
     created = true;
     saveDatabase();
-  } else if (!existing.is_current) {
-    dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [fy.id]);
+    return { id, label, created: true, is_current: isCurrent };
+  }
+
+  // If already exists, preserve data! Check if current needs marking only if requested
+  if (isCurrent && !existing.is_current) {
+    dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [existing.id]);
+    dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [existing.id]);
+    saveDatabase();
+  }
+
+  return {
+    id: existing.id,
+    label: existing.label,
+    created: false,
+    is_current: isCurrent ? true : Boolean(existing.is_current)
+  };
+}
+
+export function ensureCurrentFinancialYear(targetDate = new Date()): { id: string; label: string; created: boolean } {
+  if (!dbInstance) return { id: "year_2026_2027", label: "2026-2027", created: false };
+  const fy = getCurrentFinancialYear(targetDate);
+  const existing = queryOne<any>("SELECT id, is_current FROM academic_years WHERE id = ?", [fy.id]);
+
+  if (!existing) {
+    const res = ensureSessionYear(fy.startYear, fy.endYear, false, "ACTIVE");
+    return { id: res.id, label: res.label, created: res.created };
+  }
+
+  // Ensure at least one session is marked as current
+  const anyCurrent = queryOne<any>("SELECT id FROM academic_years WHERE is_current = 1");
+  if (!anyCurrent) {
     dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [fy.id]);
     saveDatabase();
   }
 
-  return { id: fy.id, label: fy.label, created };
+  return { id: fy.id, label: fy.label, created: false };
+}
+
+export function setCurrentSessionYear(yearId: string): { success: boolean; label?: string; id?: string } {
+  if (!dbInstance) return { success: false };
+  const yr = queryOne<any>("SELECT id, label FROM academic_years WHERE id = ?", [yearId]);
+  if (!yr) return { success: false };
+
+  dbInstance.run("UPDATE academic_years SET is_current = 0");
+  dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [yearId]);
+  saveDatabase();
+
+  return { success: true, label: yr.label, id: yr.id };
+}
+
+export function getSessionSummary(): any[] {
+  if (!dbInstance) return [];
+  const years = queryAll<any>("SELECT * FROM academic_years ORDER BY label DESC");
+  const districts = queryAll<any>("SELECT id, name FROM districts WHERE status = 'ACTIVE'");
+  const totalDistricts = districts.length;
+
+  return years.map((y) => {
+    // Total members across all districts for this year
+    const memberSum = queryOne<any>(
+      "SELECT COALESCE(SUM(grand_total), 0) as total_members, COALESCE(SUM(youth_total), 0) as youth, COALESCE(SUM(unit_leaders_total), 0) as leaders, COALESCE(SUM(professionals_total), 0) as staff FROM member_counts WHERE year_id = ?",
+      [y.id]
+    );
+
+    // Total units across all districts for this year
+    const unitSum = queryOne<any>(
+      `SELECT
+        COALESCE(SUM(bulbul_flock + guide_company + ranger_team + cub_pack + scout_troop + rover_crew), 0) as total_units
+      FROM unit_details WHERE year_id = ?`,
+      [y.id]
+    );
+
+    // Number of districts with confirmed census
+    const confirmedCount = queryOne<any>(
+      "SELECT COUNT(*) as count FROM census_confirmations WHERE year_id = ? AND is_confirmed = 1",
+      [y.id]
+    );
+
+    // Compliance documents uploaded for this year
+    const arCount = queryOne<any>("SELECT COUNT(DISTINCT district_id) as count FROM annual_reports WHERE year_id = ?", [y.id]);
+    const crCount = queryOne<any>("SELECT COUNT(DISTINCT district_id) as count FROM census_reports WHERE year_id = ?", [y.id]);
+    const asCount = queryOne<any>("SELECT COUNT(DISTINCT district_id) as count FROM audited_statements WHERE year_id = ?", [y.id]);
+    const deadline = queryOne<any>("SELECT deadline_date, status FROM deadlines WHERE year_id = ?", [y.id]);
+
+    return {
+      id: y.id,
+      label: y.label,
+      is_current: Boolean(y.is_current),
+      status: y.status || "ACTIVE",
+      total_districts: totalDistricts,
+      total_members: memberSum?.total_members || 0,
+      youth_members: memberSum?.youth || 0,
+      unit_leaders: memberSum?.leaders || 0,
+      professionals_staff: memberSum?.staff || 0,
+      total_units: unitSum?.total_units || 0,
+      confirmed_districts: confirmedCount?.count || 0,
+      annual_reports_count: arCount?.count || 0,
+      census_reports_count: crCount?.count || 0,
+      audited_statements_count: asCount?.count || 0,
+      deadline_date: deadline?.deadline_date || null,
+      deadline_status: deadline?.status || "OPEN"
+    };
+  });
+}
+
+// -------------------------------------------------------------
+// System Settings & Maintenance Mode Persistence
+// -------------------------------------------------------------
+export function getMaintenanceMode(): {
+  enabled: boolean;
+  message: string;
+  updatedAt: string;
+  updatedBy: string;
+} {
+  try {
+    const row = queryOne<any>(
+      "SELECT value, message, updated_at, updated_by FROM system_settings WHERE key = 'maintenance_mode'"
+    );
+    if (!row) {
+      return {
+        enabled: false,
+        message: "ERBSG Data Control Portal is currently under maintenance. Please try again later.",
+        updatedAt: new Date().toISOString(),
+        updatedBy: "SYSTEM"
+      };
+    }
+    return {
+      enabled: row.value === "true" || row.value === "1",
+      message: row.message || "ERBSG Data Control Portal is currently under maintenance. Please try again later.",
+      updatedAt: row.updated_at || new Date().toISOString(),
+      updatedBy: row.updated_by || "STATE_ADMIN"
+    };
+  } catch (_) {
+    return {
+      enabled: false,
+      message: "ERBSG Data Control Portal is currently under maintenance. Please try again later.",
+      updatedAt: new Date().toISOString(),
+      updatedBy: "SYSTEM"
+    };
+  }
+}
+
+export function setMaintenanceMode(
+  enabled: boolean,
+  message?: string,
+  updatedBy: string = "STATE_ADMIN"
+): { enabled: boolean; message: string; updatedAt: string; updatedBy: string } {
+  const msg =
+    message && message.trim()
+      ? message.trim()
+      : "ERBSG Data Control Portal is currently under maintenance. Please try again later.";
+  const val = enabled ? "true" : "false";
+
+  const existing = queryOne<any>("SELECT key FROM system_settings WHERE key = 'maintenance_mode'");
+  if (existing) {
+    runQuery(
+      "UPDATE system_settings SET value = ?, message = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE key = 'maintenance_mode'",
+      [val, msg, updatedBy]
+    );
+  } else {
+    runQuery(
+      "INSERT INTO system_settings (key, value, message, updated_at, updated_by) VALUES ('maintenance_mode', ?, ?, CURRENT_TIMESTAMP, ?)",
+      [val, msg, updatedBy]
+    );
+  }
+
+  return getMaintenanceMode();
+}
+
+// -------------------------------------------------------------
+// Annual Census Return Final Confirmation & Locking
+// -------------------------------------------------------------
+export function getCensusConfirmation(
+  districtId: string,
+  yearId: string
+): {
+  is_confirmed: boolean;
+  confirmed_at: string | null;
+  confirmed_by?: string | null;
+  confirmed_by_name?: string | null;
+  confirmed_by_bsg_id?: string | null;
+} {
+  try {
+    const row = queryOne<any>(
+      "SELECT is_confirmed, confirmed_at, confirmed_by, confirmed_by_name, confirmed_by_bsg_id FROM census_confirmations WHERE district_id = ? AND year_id = ?",
+      [districtId, yearId]
+    );
+    if (!row) {
+      return { is_confirmed: false, confirmed_at: null };
+    }
+    return {
+      is_confirmed: Boolean(row.is_confirmed),
+      confirmed_at: row.confirmed_at || null,
+      confirmed_by: row.confirmed_by || null,
+      confirmed_by_name: row.confirmed_by_name || null,
+      confirmed_by_bsg_id: row.confirmed_by_bsg_id || null,
+    };
+  } catch (_) {
+    return { is_confirmed: false, confirmed_at: null };
+  }
+}
+
+export function setCensusConfirmation(
+  districtId: string,
+  yearId: string,
+  confirmedBy: string,
+  confirmedByName: string,
+  confirmedByBsgId: string,
+  ipAddress?: string
+): {
+  is_confirmed: boolean;
+  confirmed_at: string;
+  confirmed_by: string;
+  confirmed_by_name: string;
+  confirmed_by_bsg_id: string;
+} {
+  const existing = queryOne<any>(
+    "SELECT id FROM census_confirmations WHERE district_id = ? AND year_id = ?",
+    [districtId, yearId]
+  );
+  const nowIso = new Date().toISOString();
+
+  if (existing) {
+    runQuery(
+      `UPDATE census_confirmations SET
+        is_confirmed = 1,
+        confirmed_at = CURRENT_TIMESTAMP,
+        confirmed_by = ?,
+        confirmed_by_name = ?,
+        confirmed_by_bsg_id = ?,
+        ip_address = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE district_id = ? AND year_id = ?`,
+      [confirmedBy, confirmedByName, confirmedByBsgId, ipAddress || null, districtId, yearId]
+    );
+  } else {
+    const id = `cc_${districtId}_${yearId}`;
+    runQuery(
+      `INSERT INTO census_confirmations (
+        id, state_id, district_id, year_id,
+        is_confirmed, confirmed_at, confirmed_by, confirmed_by_name, confirmed_by_bsg_id, ip_address, updated_at
+      ) VALUES (?, 'state_er', ?, ?, 1, CURRENT_TIMESTAMP, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [id, districtId, yearId, confirmedBy, confirmedByName, confirmedByBsgId, ipAddress || null]
+    );
+  }
+
+  return {
+    is_confirmed: true,
+    confirmed_at: nowIso,
+    confirmed_by: confirmedBy,
+    confirmed_by_name: confirmedByName,
+    confirmed_by_bsg_id: confirmedByBsgId,
+  };
+}
+
+export function unlockCensusConfirmation(districtId: string, yearId: string): void {
+  runQuery(
+    `UPDATE census_confirmations SET
+      is_confirmed = 0,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE district_id = ? AND year_id = ?`,
+    [districtId, yearId]
+  );
+}
+
+// -------------------------------------------------------------
+// Support & Feedback System Persistence
+// -------------------------------------------------------------
+export function createSupportFeedback(ticket: {
+  id?: string;
+  district_id: string;
+  district_name: string;
+  user_id: string;
+  user_name: string;
+  bsg_id: string;
+  user_email?: string | null;
+  category: string;
+  priority: string;
+  subject: string;
+  message: string;
+}): any {
+  const id = ticket.id || `sup_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  runQuery(
+    `INSERT INTO support_feedback (
+      id, state_id, district_id, district_name, user_id, user_name, bsg_id, user_email,
+      category, priority, subject, message, status, created_at, updated_at
+    ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      id,
+      ticket.district_id,
+      ticket.district_name,
+      ticket.user_id,
+      ticket.user_name,
+      ticket.bsg_id,
+      ticket.user_email || null,
+      ticket.category || "SUPPORT",
+      ticket.priority || "NORMAL",
+      ticket.subject,
+      ticket.message
+    ]
+  );
+  return getSupportFeedbackById(id);
+}
+
+export function getSupportFeedback(filters: {
+  district_id?: string;
+  status?: string;
+  search?: string;
+}): any[] {
+  let sql = "SELECT * FROM support_feedback WHERE 1=1";
+  const params: any[] = [];
+
+  if (filters.district_id && filters.district_id !== "ALL") {
+    sql += " AND district_id = ?";
+    params.push(filters.district_id);
+  }
+
+  if (filters.status && filters.status !== "ALL") {
+    sql += " AND status = ?";
+    params.push(filters.status);
+  }
+
+  if (filters.search && filters.search.trim()) {
+    const term = `%${filters.search.trim()}%`;
+    sql += " AND (subject LIKE ? OR message LIKE ? OR user_name LIKE ? OR bsg_id LIKE ? OR district_name LIKE ?)";
+    params.push(term, term, term, term, term);
+  }
+
+  sql += " ORDER BY created_at DESC";
+  return queryAll<any>(sql, params);
+}
+
+export function getSupportFeedbackById(id: string): any | null {
+  return queryOne<any>("SELECT * FROM support_feedback WHERE id = ?", [id]);
+}
+
+export function updateSupportFeedback(
+  id: string,
+  update: {
+    status?: string;
+    admin_reply?: string;
+    admin_name?: string;
+  }
+): any | null {
+  const existing = getSupportFeedbackById(id);
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+  const newStatus = update.status || existing.status;
+  const adminReply = update.admin_reply !== undefined ? update.admin_reply : existing.admin_reply;
+  const adminName = update.admin_name || existing.admin_replied_by || "State Admin";
+  const resolvedAt = newStatus === "RESOLVED" ? (existing.resolved_at || now) : null;
+  const adminRepliedAt = adminReply ? (existing.admin_replied_at || now) : existing.admin_replied_at;
+
+  runQuery(
+    `UPDATE support_feedback SET
+      status = ?,
+      admin_reply = ?,
+      admin_replied_at = ?,
+      admin_replied_by = ?,
+      resolved_at = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    [newStatus, adminReply, adminRepliedAt, adminName, resolvedAt, id]
+  );
+
+  return getSupportFeedbackById(id);
 }
 
 function initSchemaAndSeed(db: SqlJsDatabase) {
@@ -391,7 +794,69 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
       used INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      message TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_by TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS census_confirmations (
+      id TEXT PRIMARY KEY,
+      state_id TEXT NOT NULL DEFAULT 'state_er',
+      district_id TEXT NOT NULL,
+      year_id TEXT NOT NULL,
+      is_confirmed INTEGER DEFAULT 0,
+      confirmed_at DATETIME,
+      confirmed_by TEXT,
+      confirmed_by_name TEXT,
+      confirmed_by_bsg_id TEXT,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(district_id, year_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS support_feedback (
+      id TEXT PRIMARY KEY,
+      state_id TEXT NOT NULL DEFAULT 'state_er',
+      district_id TEXT NOT NULL,
+      district_name TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_name TEXT NOT NULL,
+      bsg_id TEXT NOT NULL,
+      user_email TEXT,
+      category TEXT NOT NULL DEFAULT 'SUPPORT',
+      priority TEXT NOT NULL DEFAULT 'NORMAL',
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'NEW',
+      admin_reply TEXT,
+      admin_replied_at DATETIME,
+      admin_replied_by TEXT,
+      resolved_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        message TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_by TEXT
+      )
+    `);
+    db.run(`
+      INSERT OR IGNORE INTO system_settings (key, value, message, updated_at, updated_by)
+      VALUES ('maintenance_mode', 'false', 'ERBSG Data Control Portal is currently under maintenance. Please try again later.', CURRENT_TIMESTAMP, 'SYSTEM')
+    `);
+  } catch (_) {}
 
   try {
     db.run("ALTER TABLE member_counts ADD COLUMN scout_masters INTEGER DEFAULT 0");
@@ -527,15 +992,15 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     console.error("Error purging historical academic years:", err);
   }
 
-  // --- Migration: Ensure all initial District Users with must_change_password = 1 have password hash matching Test@1234 ---
+  // --- Migration: Ensure initial District Users have default password hash if missing ---
   try {
     const defaultDistrictPasswordHash = bcrypt.hashSync("Test@1234", 10);
     db.run(
-      "UPDATE users SET password_hash = ? WHERE role = 'DISTRICT_USER' AND must_change_password = 1",
+      "UPDATE users SET password_hash = ? WHERE role = 'DISTRICT_USER' AND (password_hash IS NULL OR password_hash = '')",
       [defaultDistrictPasswordHash]
     );
   } catch (err) {
-    console.error("Error resetting default password hashes for district users:", err);
+    console.error("Error ensuring default password hashes for district users:", err);
   }
 
   // --- Migration: Ensure official_contacts table has railway_designation, scouting_rank, bsg_id, position_order, position_name ---
@@ -778,7 +1243,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
     // Hash passwords securely using bcrypt (NO PLAINTEXT STORAGE)
     const saltRounds = 10;
-    const adminPasswordHash = bcrypt.hashSync("Admin@1234", saltRounds);
+    const adminPasswordHash = bcrypt.hashSync("Admin@ERBSG2026", saltRounds);
     const defaultDistrictPasswordHash = bcrypt.hashSync("Test@1234", saltRounds);
 
     // 1. Seed State Admin

@@ -13,20 +13,26 @@ import { OfficialContactsView } from "./pages/OfficialContactsView";
 import { BasicDetailsView } from "./pages/BasicDetailsView";
 import { DistrictManagementView } from "./pages/DistrictManagementView";
 import { DistrictUsersView } from "./pages/DistrictUsersView";
+import { MaintenanceModeView } from "./pages/MaintenanceModeView";
 import { AuditLogsView } from "./pages/AuditLogsView";
 import { EmailOutboxView } from "./pages/EmailOutboxView";
 import { ProfileView } from "./pages/ProfileView";
-import { Loader2 } from "lucide-react";
+import { SessionManagementView } from "./pages/SessionManagementView";
+import { SupportFeedbackView } from "./pages/SupportFeedbackView";
+import { MaintenanceScreen } from "./components/MaintenanceScreen";
+import { Loader2, Wrench } from "lucide-react";
 
 const STATE_ADMIN_ONLY_VIEWS = [
   "district-management",
   "district-users",
+  "session-years",
+  "maintenance-mode",
   "audit-logs",
   "email-outbox",
 ];
 
 const PortalMain: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, maintenanceMode } = useAuth();
   const [currentView, setCurrentView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -63,6 +69,11 @@ const PortalMain: React.FC = () => {
 
   if (!user) {
     return <LoginPage />;
+  }
+
+  // If Maintenance Mode is active, District Users immediately see the Website Under Maintenance screen
+  if (user.role === "DISTRICT_USER" && maintenanceMode) {
+    return <MaintenanceScreen />;
   }
 
   // Enforce first-login password change for default password accounts
@@ -112,10 +123,16 @@ const PortalMain: React.FC = () => {
         return <OfficialContactsView />;
       case "members":
         return <MembersView />;
+      case "support-feedback":
+        return <SupportFeedbackView />;
       case "district-management":
         return <DistrictManagementView />;
       case "district-users":
         return <DistrictUsersView />;
+      case "session-years":
+        return <SessionManagementView onNavigate={setCurrentView} />;
+      case "maintenance-mode":
+        return <MaintenanceModeView />;
       case "audit-logs":
         return <AuditLogsView />;
       case "email-outbox":
@@ -145,6 +162,36 @@ const PortalMain: React.FC = () => {
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-7xl w-full mx-auto">
+          {/* Prominent Banner for State Admin when Maintenance Mode is Active */}
+          {user.role === "STATE_ADMIN" && maintenanceMode && (
+            <div className="mb-6 p-4 rounded-2xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-950 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md shadow-amber-500/10">
+              <div className="flex items-center gap-3">
+                <span className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 font-bold shadow-xs">
+                  <Wrench className="w-5 h-5 animate-pulse" />
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                      MAINTENANCE MODE IS CURRENTLY ACTIVE
+                    </span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
+                      LIVE
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-amber-300 mt-0.5">
+                    District Users cannot access the normal dashboard and are seeing the "Website Under Maintenance" screen. Turn OFF to restore access.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCurrentView("maintenance-mode")}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition shrink-0 cursor-pointer shadow-xs"
+              >
+                Manage Maintenance
+              </button>
+            </div>
+          )}
+
           {isFirstLogin ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6 space-y-4">
               <div className="w-14 h-14 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center text-amber-600 border border-amber-200 dark:border-amber-800 animate-pulse">

@@ -61,6 +61,11 @@ export const CensusReportsView: React.FC = () => {
   }, [syncEventTimestamp]);
 
   useEffect(() => {
+    setFilterYear(selectedYear);
+    setUploadYearId(selectedYear);
+  }, [selectedYear]);
+
+  useEffect(() => {
     if (user?.districtId) {
       setUploadDistrictId(user.districtId);
     }

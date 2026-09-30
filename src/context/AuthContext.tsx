@@ -27,6 +27,10 @@ interface AuthContextType {
   refreshDistricts: () => Promise<void>;
   refreshYears: () => Promise<void>;
   syncEventTimestamp: number;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  refreshMaintenanceMode: () => Promise<boolean>;
+  setMaintenanceMode: (enabled: boolean, message?: string) => Promise<void>;
 }
 
 const CANONICAL_DISTRICTS: District[] = [
@@ -54,6 +58,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [districts, setDistricts] = useState<District[]>(CANONICAL_DISTRICTS);
   const [activeDistrictId, setActiveDistrictId] = useState<string>("dist_cen");
   const [syncEventTimestamp, setSyncEventTimestamp] = useState<number>(Date.now());
+  const [maintenanceMode, setMaintenanceModeState] = useState<boolean>(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState<string>(
+    "ERBSG Data Control Portal is currently under maintenance. Please try again later."
+  );
+
+  const refreshMaintenanceMode = useCallback(async () => {
+    try {
+      const data = await api.getMaintenanceStatus();
+      if (data && typeof data.maintenanceMode === "boolean") {
+        setMaintenanceModeState(data.maintenanceMode);
+        if (data.message) {
+          setMaintenanceMessage(data.message);
+        }
+        return data.maintenanceMode;
+      }
+    } catch {
+      // Ignore network errors during check
+    }
+    return false;
+  }, []);
+
+  const setMaintenanceMode = useCallback(async (enabled: boolean, message?: string) => {
+    const res = await api.setMaintenanceMode(enabled, message);
+    if (res && typeof res.maintenanceMode === "boolean") {
+      setMaintenanceModeState(res.maintenanceMode);
+      if (res.message) {
+        setMaintenanceMessage(res.message);
+      }
+    }
+  }, []);
 
   const refreshUser = useCallback(async () => {
     try {
@@ -65,6 +99,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const data = await api.getMe();
       setUser(data.user);
+      if (typeof (data as any).maintenanceMode === "boolean") {
+        setMaintenanceModeState((data as any).maintenanceMode);
+      }
+      if ((data as any).maintenanceMessage) {
+        setMaintenanceMessage((data as any).maintenanceMessage);
+      }
       if (data.user.role === "DISTRICT_USER" && data.user.districtId) {
         setActiveDistrictId(data.user.districtId);
       }
@@ -114,8 +154,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const list = await api.getYears();
       if (Array.isArray(list) && list.length > 0) {
         setAvailableYears(list);
-        const curr = list.find((y) => y.is_current === 1);
-        if (curr) setSelectedYear(curr.id);
+        setSelectedYear((prev) => {
+          // If the previously selected year still exists in the available list, preserve it!
+          if (prev && list.some((y) => y.id === prev)) {
+            return prev;
+          }
+          // Otherwise default to the current active session or first session
+          const curr = list.find((y) => y.is_current === 1);
+          return curr ? curr.id : list[0].id;
+        });
       }
     } catch {
       // Fallback already populated in initial state
@@ -125,7 +172,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     refreshUser();
     refreshYears();
-  }, [refreshUser, refreshYears]);
+    refreshMaintenanceMode();
+
+    const interval = setInterval(() => {
+      refreshMaintenanceMode();
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [refreshUser, refreshYears, refreshMaintenanceMode]);
 
   useEffect(() => {
     if (user && !user.mustChangePassword) {
@@ -141,6 +194,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       eventSource.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
+          if (parsed.type === "MAINTENANCE_MODE_CHANGED") {
+            if (typeof parsed.payload?.maintenanceMode === "boolean") {
+              setMaintenanceModeState(parsed.payload.maintenanceMode);
+            }
+            if (parsed.payload?.message) {
+              setMaintenanceMessage(parsed.payload.message);
+            }
+          }
+          if (parsed.type === "SESSION_YEAR_CREATED" || parsed.type === "ACTIVE_SESSION_CHANGED") {
+            refreshYears();
+          }
           if (parsed.type !== "CONNECTED") {
             setSyncEventTimestamp(Date.now());
           }
@@ -159,11 +223,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setToken(null);
     };
+    const onMaintenanceModeEvent = (e: any) => {
+      setMaintenanceModeState(true);
+      if (e?.detail?.error) {
+        setMaintenanceMessage(e.detail.error);
+      }
+    };
     window.addEventListener("erbsg_auth_expired", onAuthExpired);
+    window.addEventListener("erbsg_maintenance_mode", onMaintenanceModeEvent);
 
     return () => {
       if (eventSource) eventSource.close();
       window.removeEventListener("erbsg_auth_expired", onAuthExpired);
+      window.removeEventListener("erbsg_maintenance_mode", onMaintenanceModeEvent);
     };
   }, []);
 
@@ -174,6 +246,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     onSuccessTransition?: () => void
   ) => {
     const res = await api.login(identifier, pass, mfaCode);
+    if (typeof (res as any).maintenanceMode === "boolean") {
+      setMaintenanceModeState((res as any).maintenanceMode);
+    }
+    if ((res as any).maintenanceMessage) {
+      setMaintenanceMessage((res as any).maintenanceMessage);
+    }
     if (res.mfaRequired) {
       return { mfaRequired: true, userId: res.userId };
     }
@@ -245,6 +323,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshDistricts,
         refreshYears,
         syncEventTimestamp,
+        maintenanceMode,
+        maintenanceMessage,
+        refreshMaintenanceMode,
+        setMaintenanceMode,
       }}
     >
       {children}

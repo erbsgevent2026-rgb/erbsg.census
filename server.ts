@@ -3,8 +3,10 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { getDb, ensureCurrentFinancialYear } from "./server/db.js";
-import { apiRouter } from "./server/routes.js";
+import { getDb, ensureCurrentFinancialYear, getMaintenanceMode } from "./server/db.ts";
+import { apiRouter } from "./server/routes.ts";
+
+process.env.DISABLE_HMR = "true";
 
 // Global error handlers to prevent unexpected process exits and restart loops in production
 process.on("unhandledRejection", (reason, promise) => {
@@ -53,11 +55,14 @@ async function startServer() {
       dbStatus = "error";
     }
 
+    const maint = getMaintenanceMode();
+
     res.status(200).json({
       status: "ok",
       database: dbStatus,
       app: "ERBSG Data Control Portal",
       state: "Eastern Railway",
+      maintenanceMode: maint.enabled,
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
     });

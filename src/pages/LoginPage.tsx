@@ -14,11 +14,12 @@ import {
   Copy,
   Check,
   KeyRound,
-  X
+  X,
+  Wrench
 } from "lucide-react";
 
 export const LoginPage: React.FC = () => {
-  const { login } = useAuth();
+  const { login, maintenanceMode, maintenanceMessage } = useAuth();
   // Keep only "BSG" pre-filled. The user enters the remaining numeric portion after it.
   const [identifier, setIdentifier] = useState("BSG");
   // The Password field must remain completely blank.
@@ -226,6 +227,21 @@ export const LoginPage: React.FC = () => {
             onSubmit={handleSubmit}
             className={`p-6 sm:p-8 space-y-4 animate-stagger-form ${isShaking ? "animate-subtle-shake" : ""}`}
           >
+            {maintenanceMode && (
+              <div className="p-3.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+                <div>
+                  <span className="font-bold text-amber-800 dark:text-amber-300">Website Under Maintenance:</span>
+                  <p className="mt-0.5 text-[11px] leading-relaxed">
+                    {maintenanceMessage || "ERBSG Data Control Portal is currently under maintenance. Please try again later."}
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    State Administrators may log in below to access the management panel.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {error && (
               <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300 animate-in fade-in duration-200">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />

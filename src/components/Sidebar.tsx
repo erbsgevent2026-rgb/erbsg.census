@@ -15,7 +15,10 @@ import {
   Mail,
   User as UserIcon,
   LogOut,
-  X
+  X,
+  Wrench,
+  Calendar,
+  LifeBuoy
 } from "lucide-react";
 
 interface SidebarProps {
@@ -31,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpenMobile,
   onCloseMobile,
 }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, maintenanceMode } = useAuth();
   const { status: healthStatus } = useHealthCheck();
   const isStateAdmin = user?.role === "STATE_ADMIN";
 
@@ -43,11 +46,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "audited-statements", label: "Audited Statement", icon: FileCheck },
     { id: "official-contacts", label: "Official Contact Person", icon: PhoneCall },
     { id: "members", label: "Members", icon: UserCheck },
+    { id: "support-feedback", label: "Support & Feedback", icon: LifeBuoy },
   ];
 
   const adminNavItems = [
     { id: "district-management", label: "District Management", icon: ShieldCheck },
     { id: "district-users", label: "District Users", icon: UserCog },
+    { id: "session-years", label: "Session Years", icon: Calendar },
+    { id: "maintenance-mode", label: "Maintenance Mode", icon: Wrench },
     { id: "audit-logs", label: "Audit Logs", icon: History },
     { id: "email-outbox", label: "Email Outbox", icon: Mail },
   ];
@@ -145,7 +151,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     }`}
                   >
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-slate-950" : "text-amber-400/70"}`} />
-                    <span className="truncate">{item.label}</span>
+                    <span className="truncate flex-1 text-left">{item.label}</span>
+                    {item.id === "maintenance-mode" && maintenanceMode && (
+                      <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 shrink-0">
+                        ON
+                      </span>
+                    )}
                   </button>
                 );
               })}

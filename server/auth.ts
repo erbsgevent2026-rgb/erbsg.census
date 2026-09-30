@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
-import { Request, Response, NextFunction } from "express";
-import { queryOne, runQuery } from "./db.js";
-import { mirrorAuditLogToFirestore } from "./firestoreService.js";
+import type { Request, Response, NextFunction } from "express";
+import { queryOne, runQuery } from "./db.ts";
+import { mirrorAuditLogToFirestore } from "./firestoreService.ts";
 
 export const JWT_SECRET = process.env.JWT_SECRET || "erbsg_production_jwt_secret_key_railway_scouts_guides";
 
