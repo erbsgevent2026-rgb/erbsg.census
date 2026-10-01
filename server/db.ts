@@ -4,16 +4,213 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 
-export function getDatabasePath(): string {
-  if (process.env.DATABASE_PATH && process.env.DATABASE_PATH.trim()) {
-    return path.resolve(process.env.DATABASE_PATH.trim());
+/**
+ * Detects if a directory path is inside a volatile/replaceable deployment directory
+ * such as Hostinger's /current/, /hbuilds/versions/, /releases/, or /.git/
+ */
+export function isDeploymentSpecificPath(targetPath: string): boolean {
+  const normalized = targetPath.replace(/\\/g, "/");
+  return (
+    normalized.includes("/current/") ||
+    normalized.endsWith("/current") ||
+    normalized.includes("/hbuilds/") ||
+    normalized.includes("/releases/") ||
+    normalized.includes("/.git/")
+  );
+}
+
+/**
+ * Extracts the stable root directory outside versioned deployment directories.
+ * For example:
+ *   /home/u681527468/domains/erbsg.org/current/nodejs
+ *   -> /home/u681527468/domains/erbsg.org
+ * 
+ *   /home/u681527468/domains/erbsg.org/hbuilds/versions/xyz/nodejs
+ *   -> /home/u681527468/domains/erbsg.org
+ */
+export function getPersistentBaseDir(cwd = process.cwd()): string {
+  const normalized = path.resolve(cwd).replace(/\\/g, "/");
+
+  // Check for Hostinger domain structure: /home/<user>/domains/<domain>
+  const domainMatch = normalized.match(/^(\/home\/[^/]+\/domains\/[^/]+)/);
+  if (domainMatch) {
+    return domainMatch[1];
   }
-  return path.resolve(process.cwd(), "data", "erbsg.sqlite");
+
+  // Check for /current, /hbuilds, or /releases markers
+  const markers = ["/current", "/hbuilds", "/releases"];
+  for (const marker of markers) {
+    const idx = normalized.indexOf(marker);
+    if (idx > 0) {
+      return normalized.substring(0, idx);
+    }
+  }
+
+  // Check for /home/<user>
+  const userMatch = normalized.match(/^(\/home\/[^/]+)/);
+  if (userMatch) {
+    return userMatch[1];
+  }
+
+  return cwd;
+}
+
+export interface DatabasePathInfo {
+  resolvedPath: string;
+  source: string;
+  isPersistent: boolean;
+  fileExists: boolean;
+  parentDirExists: boolean;
+  fileSizeBytes: number;
+  candidatesSearched: string[];
+}
+
+/**
+ * Resolves the target database path with intelligent persistent storage discovery
+ * and comprehensive diagnostic inspection.
+ */
+export function getDatabasePathInfo(): DatabasePathInfo {
+  const candidatesSearched: string[] = [];
+  const cwd = process.cwd();
+  const persistentBase = getPersistentBaseDir(cwd);
+
+  // 1. If DATABASE_PATH environment variable is explicitly provided
+  if (process.env.DATABASE_PATH && process.env.DATABASE_PATH.trim()) {
+    const rawPath = process.env.DATABASE_PATH.trim();
+    const resolved = path.resolve(rawPath);
+    candidatesSearched.push(resolved);
+
+    // If file exists at this path, use it directly
+    if (fs.existsSync(resolved)) {
+      const stats = fs.statSync(resolved);
+      return {
+        resolvedPath: resolved,
+        source: "Explicit DATABASE_PATH environment variable (Verified existing)",
+        isPersistent: !isDeploymentSpecificPath(resolved),
+        fileExists: true,
+        parentDirExists: fs.existsSync(path.dirname(resolved)),
+        fileSizeBytes: stats.size,
+        candidatesSearched
+      };
+    }
+
+    // If explicit path was relative and we are inside a Hostinger version directory,
+    // check if the file exists at the persistent base directory with that same relative path
+    if (!path.isAbsolute(rawPath) && isDeploymentSpecificPath(cwd)) {
+      const persistentCandidate = path.resolve(persistentBase, rawPath);
+      candidatesSearched.push(persistentCandidate);
+      if (fs.existsSync(persistentCandidate)) {
+        const stats = fs.statSync(persistentCandidate);
+        return {
+          resolvedPath: persistentCandidate,
+          source: `Resolved relative DATABASE_PATH against persistent base (${persistentBase})`,
+          isPersistent: true,
+          fileExists: true,
+          parentDirExists: fs.existsSync(path.dirname(persistentCandidate)),
+          fileSizeBytes: stats.size,
+          candidatesSearched
+        };
+      }
+    }
+
+    // Explicit path does not exist on disk
+    return {
+      resolvedPath: resolved,
+      source: "Explicit DATABASE_PATH environment variable (File not found on disk)",
+      isPersistent: !isDeploymentSpecificPath(resolved),
+      fileExists: false,
+      parentDirExists: fs.existsSync(path.dirname(resolved)),
+      fileSizeBytes: 0,
+      candidatesSearched
+    };
+  }
+
+  // 2. If DATABASE_PATH is NOT provided, search known persistent candidate locations for an existing database
+  const potentialCandidates: { path: string; label: string }[] = [];
+
+  if (persistentBase !== cwd) {
+    potentialCandidates.push({
+      path: path.join(persistentBase, "data", "erbsg.sqlite"),
+      label: "Persistent domain data directory (data/erbsg.sqlite)"
+    });
+    potentialCandidates.push({
+      path: path.join(persistentBase, "erbsg_storage", "erbsg.sqlite"),
+      label: "Persistent domain storage directory (erbsg_storage/erbsg.sqlite)"
+    });
+    potentialCandidates.push({
+      path: path.join(persistentBase, "erbsg.sqlite"),
+      label: "Persistent domain root directory (erbsg.sqlite)"
+    });
+  }
+
+  // Check user home directory if different
+  const userHomeMatch = cwd.match(/^(\/home\/[^/]+)/);
+  if (userHomeMatch && userHomeMatch[1] !== persistentBase) {
+    potentialCandidates.push({
+      path: path.join(userHomeMatch[1], "data", "erbsg.sqlite"),
+      label: "Hostinger user home data directory"
+    });
+    potentialCandidates.push({
+      path: path.join(userHomeMatch[1], "erbsg_storage", "erbsg.sqlite"),
+      label: "Hostinger user home storage directory"
+    });
+  }
+
+  // Local cwd data folder
+  potentialCandidates.push({
+    path: path.resolve(cwd, "data", "erbsg.sqlite"),
+    label: "Application current working directory (data/erbsg.sqlite)"
+  });
+
+  for (const cand of potentialCandidates) {
+    candidatesSearched.push(cand.path);
+    if (fs.existsSync(cand.path)) {
+      const stats = fs.statSync(cand.path);
+      if (stats.isFile()) {
+        return {
+          resolvedPath: cand.path,
+          source: `Auto-detected existing database: ${cand.label}`,
+          isPersistent: !isDeploymentSpecificPath(cand.path),
+          fileExists: true,
+          parentDirExists: true,
+          fileSizeBytes: stats.size,
+          candidatesSearched
+        };
+      }
+    }
+  }
+
+  // 3. No existing database file found anywhere:
+  // Determine the recommended persistent default
+  let defaultPersistentPath: string;
+  let sourceDesc: string;
+
+  if (persistentBase !== cwd) {
+    defaultPersistentPath = path.join(persistentBase, "data", "erbsg.sqlite");
+    sourceDesc = `Stable persistent default outside deployment directory (${persistentBase}/data/erbsg.sqlite)`;
+  } else {
+    defaultPersistentPath = path.resolve(cwd, "data", "erbsg.sqlite");
+    sourceDesc = "Standard default path (data/erbsg.sqlite)";
+  }
+
+  return {
+    resolvedPath: defaultPersistentPath,
+    source: sourceDesc,
+    isPersistent: !isDeploymentSpecificPath(defaultPersistentPath),
+    fileExists: fs.existsSync(defaultPersistentPath),
+    parentDirExists: fs.existsSync(path.dirname(defaultPersistentPath)),
+    fileSizeBytes: fs.existsSync(defaultPersistentPath) ? fs.statSync(defaultPersistentPath).size : 0,
+    candidatesSearched
+  };
+}
+
+export function getDatabasePath(): string {
+  return getDatabasePathInfo().resolvedPath;
 }
 
 let dbInstance: SqlJsDatabase | null = null;
 
-// Ensure database directory exists
+// Ensure database directory exists without touching or creating database files
 function ensureDbDirectory(filePath: string): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -80,41 +277,56 @@ export function saveDatabase(): void {
 export async function getDb(): Promise<SqlJsDatabase> {
   if (dbInstance) return dbInstance;
 
-  const targetPath = getDatabasePath();
-  ensureDbDirectory(targetPath);
-  const fileExists = fs.existsSync(targetPath);
+  const info = getDatabasePathInfo();
+  const targetPath = info.resolvedPath;
 
-  // Requirement 15: Startup validation that logs resolved path and confirms existence
-  console.log(`[DATABASE PERSISTENCE AUDIT] Resolved DATABASE_PATH: "${targetPath}"`);
-  console.log(
-    `[DATABASE PERSISTENCE AUDIT] Persistent database confirmed on disk: ${
-      fileExists ? "YES (" + (fs.statSync(targetPath).size / 1024).toFixed(1) + " KB)" : "NO"
-    }`
-  );
+  // Requirement 8: Startup diagnostics that clearly show all details
+  console.log("================================================================================");
+  console.log("[DATABASE PERSISTENCE AUDIT & STARTUP DIAGNOSTICS]");
+  console.log(`  • Resolved DATABASE_PATH:        "${targetPath}"`);
+  console.log(`  • Resolution Source:            ${info.source}`);
+  console.log(`  • Is Persistent Location:       ${info.isPersistent ? "YES (outside version directory)" : "NO (WARNING: Inside deployment directory)"}`);
+  console.log(`  • Parent Directory Exists:      ${info.parentDirExists ? "YES (" + path.dirname(targetPath) + ")" : "NO"}`);
+  console.log(`  • Database File Exists:         ${info.fileExists ? "YES" : "NO"}`);
+  if (info.fileExists) {
+    console.log(`  • Database File Size:           ${(info.fileSizeBytes / 1024).toFixed(1)} KB`);
+    console.log(`  • Using Persistent Database:    YES`);
+  } else {
+    console.log(`  • ALLOW_DATABASE_CREATION:      "${process.env.ALLOW_DATABASE_CREATION || 'false'}"`);
+    console.log(`  • Candidates Searched:`);
+    info.candidatesSearched.forEach((c, idx) => console.log(`      ${idx + 1}. ${c}`));
+  }
+  console.log("================================================================================");
 
-  // Strict Safety Enforcement:
-  // If the database file does not exist, FAIL SAFELY unless ALLOW_DATABASE_CREATION === "true".
-  if (!fileExists) {
+  // Requirement 1 & 4 & 9 & 15:
+  // If the database file does not exist, FAIL SAFELY and clearly. Never create a blank database!
+  if (!info.fileExists) {
     if (process.env.ALLOW_DATABASE_CREATION !== "true") {
-      const errorMsg = `[CRITICAL DATABASE SAFETY ERROR] Database file not found at: "${targetPath}". ALLOW_DATABASE_CREATION is "${process.env.ALLOW_DATABASE_CREATION || 'false'}". Startup aborted to prevent creating a blank database and losing existing data. If this is an intentional fresh setup, explicitly set ALLOW_DATABASE_CREATION=true.`;
+      const errorMsg =
+        `[CRITICAL DATABASE SAFETY ERROR] Database file not found at persistent path: "${targetPath}".\n` +
+        `ALLOW_DATABASE_CREATION is set to "${process.env.ALLOW_DATABASE_CREATION || 'false'}". Startup aborted to prevent creating a blank database and losing existing data.\n` +
+        `HOW TO RESOLVE ON HOSTINGER:\n` +
+        `1. Place your existing 'erbsg.sqlite' file in the persistent directory: "${targetPath}"\n` +
+        `2. OR set environment variable DATABASE_PATH to the exact path of your existing database on Hostinger\n` +
+        `3. Ensure file permissions allow reading and writing (chmod 644).`;
       console.error(errorMsg);
       throw new Error(errorMsg);
     }
   }
 
   // Create an automated safety backup snapshot of existing file before any operations
-  if (fileExists) {
+  if (info.fileExists) {
     createPreStartupBackup(targetPath);
   }
 
   const SQL = await initSqlJs();
 
-  if (fileExists) {
+  if (info.fileExists) {
     try {
       console.log(`[DATABASE PERSISTENCE AUDIT] Opening verified persistent database from: "${targetPath}"`);
       const fileBuffer = fs.readFileSync(targetPath);
       dbInstance = new SQL.Database(fileBuffer);
-      console.log(`[DATABASE PERSISTENCE] Loaded existing ERBSG SQLite database from disk: ${targetPath}`);
+      console.log(`[DATABASE PERSISTENCE] Loaded existing ERBSG SQLite database successfully from disk: ${targetPath}`);
     } catch (e: any) {
       // Requirement 18:
       // If the database cannot be opened, the application FAILS SAFELY instead of silently creating a new empty production database!
