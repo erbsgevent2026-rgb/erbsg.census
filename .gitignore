@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# SQLite production databases & persistent storage
+data/*.sqlite
+data/*.sqlite-*
+data/*.db
+data/backups/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.backup*
+

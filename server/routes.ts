@@ -51,6 +51,20 @@ export function broadcastSyncEvent(eventType: string, payload: any) {
   }
 }
 
+// Ensure database is connected and ready before handling API endpoints
+apiRouter.use((req: Request, res: Response, next) => {
+  if (req.path === "/health") return next();
+  try {
+    queryOne("SELECT 1");
+    next();
+  } catch (err: any) {
+    res.status(503).json({
+      error: "Database service unavailable. Persistent database not loaded or initialized. Check server logs.",
+      details: err?.message
+    });
+  }
+});
+
 // -------------------------------------------------------------
 // Real-time SSE Synchronization Endpoint
 // -------------------------------------------------------------

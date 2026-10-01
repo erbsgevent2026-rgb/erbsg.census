@@ -4,46 +4,131 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "erbsg.sqlite");
+export function getDatabasePath(): string {
+  if (process.env.DATABASE_PATH && process.env.DATABASE_PATH.trim()) {
+    return path.resolve(process.env.DATABASE_PATH.trim());
+  }
+  return path.resolve(process.cwd(), "data", "erbsg.sqlite");
+}
 
 let dbInstance: SqlJsDatabase | null = null;
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure database directory exists
+function ensureDbDirectory(filePath: string): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+// Automatic rolling pre-startup backup before any startup logic
+function createPreStartupBackup(filePath: string): void {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const stats = fs.statSync(filePath);
+    if (stats.size === 0) return;
+
+    // Use dedicated DATABASE_BACKUP_DIR if configured, otherwise default to <database_dir>/backups
+    const backupDir = process.env.DATABASE_BACKUP_DIR && process.env.DATABASE_BACKUP_DIR.trim()
+      ? path.resolve(process.env.DATABASE_BACKUP_DIR.trim())
+      : path.join(path.dirname(filePath), "backups");
+
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    const timestamp = Date.now();
+    const backupPath = path.join(backupDir, `erbsg_autobackup_${timestamp}.sqlite`);
+    fs.copyFileSync(filePath, backupPath);
+    console.log(`[DATABASE SAFETY] Pre-startup backup snapshot created at: ${backupPath} (${(stats.size / 1024).toFixed(1)} KB)`);
+
+    // Clean up older auto backups, keep the 5 most recent
+    const files = fs.readdirSync(backupDir)
+      .filter((f) => f.startsWith("erbsg_autobackup_") && f.endsWith(".sqlite"))
+      .map((f) => ({ name: f, time: fs.statSync(path.join(backupDir, f)).mtimeMs }))
+      .sort((a, b) => b.time - a.time);
+
+    if (files.length > 5) {
+      for (const oldFile of files.slice(5)) {
+        try {
+          fs.unlinkSync(path.join(backupDir, oldFile.name));
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.warn("[DATABASE SAFETY] Warning: Could not create pre-startup backup:", err);
+  }
 }
 
 export function saveDatabase(): void {
   if (!dbInstance) return;
+  const targetPath = getDatabasePath();
   try {
+    ensureDbDirectory(targetPath);
     const data = dbInstance.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(DB_FILE, buffer);
+    
+    // Write atomically via temporary file to prevent corruption on unexpected crash or reboot
+    const tempPath = `${targetPath}.tmp_${Date.now()}`;
+    fs.writeFileSync(tempPath, buffer);
+    fs.renameSync(tempPath, targetPath);
   } catch (err) {
-    console.error("Failed to save SQLite database:", err);
+    console.error(`[DATABASE ERROR] Failed to save SQLite database to "${targetPath}":`, err);
   }
 }
 
 export async function getDb(): Promise<SqlJsDatabase> {
   if (dbInstance) return dbInstance;
 
-  const SQL = await initSqlJs();
+  const targetPath = getDatabasePath();
+  ensureDbDirectory(targetPath);
+  const fileExists = fs.existsSync(targetPath);
 
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      const fileBuffer = fs.readFileSync(DB_FILE);
-      dbInstance = new SQL.Database(fileBuffer);
-      console.log("Loaded existing ERBSG SQLite database from disk.");
-    } catch (e) {
-      console.warn("Failed to load existing DB file, creating a fresh one:", e);
-      dbInstance = new SQL.Database();
+  // Requirement 15: Startup validation that logs resolved path and confirms existence
+  console.log(`[DATABASE PERSISTENCE AUDIT] Resolved DATABASE_PATH: "${targetPath}"`);
+  console.log(
+    `[DATABASE PERSISTENCE AUDIT] Persistent database confirmed on disk: ${
+      fileExists ? "YES (" + (fs.statSync(targetPath).size / 1024).toFixed(1) + " KB)" : "NO"
+    }`
+  );
+
+  // Strict Safety Enforcement:
+  // If the database file does not exist, FAIL SAFELY unless ALLOW_DATABASE_CREATION === "true".
+  if (!fileExists) {
+    if (process.env.ALLOW_DATABASE_CREATION !== "true") {
+      const errorMsg = `[CRITICAL DATABASE SAFETY ERROR] Database file not found at: "${targetPath}". ALLOW_DATABASE_CREATION is "${process.env.ALLOW_DATABASE_CREATION || 'false'}". Startup aborted to prevent creating a blank database and losing existing data. If this is an intentional fresh setup, explicitly set ALLOW_DATABASE_CREATION=true.`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
     }
-  } else {
-    dbInstance = new SQL.Database();
-    console.log("Initialized new ERBSG SQLite database.");
   }
 
+  // Create an automated safety backup snapshot of existing file before any operations
+  if (fileExists) {
+    createPreStartupBackup(targetPath);
+  }
+
+  const SQL = await initSqlJs();
+
+  if (fileExists) {
+    try {
+      console.log(`[DATABASE PERSISTENCE AUDIT] Opening verified persistent database from: "${targetPath}"`);
+      const fileBuffer = fs.readFileSync(targetPath);
+      dbInstance = new SQL.Database(fileBuffer);
+      console.log(`[DATABASE PERSISTENCE] Loaded existing ERBSG SQLite database from disk: ${targetPath}`);
+    } catch (e: any) {
+      // Requirement 18:
+      // If the database cannot be opened, the application FAILS SAFELY instead of silently creating a new empty production database!
+      const errorMsg = `[CRITICAL DATABASE ERROR] Failed to load existing database file at "${targetPath}": ${e?.message || e}. Startup aborted to prevent data loss.`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+  } else {
+    // Only reachable when ALLOW_DATABASE_CREATION === "true"
+    dbInstance = new SQL.Database();
+    console.warn(`[DATABASE PERSISTENCE WARNING] Initialized new empty SQLite database at: ${targetPath} (ALLOW_DATABASE_CREATION=true)`);
+  }
+
+  // Run non-destructive schema migrations only
   initSchemaAndSeed(dbInstance);
 
   // Ensure Session 2025-2026 and 2026-2027 exist for all 9 districts, preserving all historical data
@@ -877,13 +962,14 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     db.run("UPDATE districts SET established_year = 1952 WHERE established_year IS NULL");
   } catch (_) {}
   try {
-    // Completely zero out bunnies and bunny aunties and align totals
+    // Zero out deprecated bunny aunties if non-zero and align totals
     db.run(`
       UPDATE member_counts SET
         bunnies = 0,
         bunny_aunties = 0,
         youth_total = bulbul + guide + ranger + scout + rover + cub,
         grand_total = (bulbul + guide + ranger + scout + rover + cub) + unit_leaders_total + professionals_total
+      WHERE (bunnies IS NOT NULL AND bunnies != 0) OR (bunny_aunties IS NOT NULL AND bunny_aunties != 0)
     `);
   } catch (_) {}
 
@@ -972,24 +1058,6 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
     }
   } catch (err) {
     console.error("Error mapping district user BSG IDs:", err);
-  }
-
-  // --- Migration: Permanently delete deprecated historical data (FY 2023-2024, FY 2024-2025, FY 2025-2026) ---
-  try {
-    const deprecatedYears = ["year_2023_2024", "year_2024_2025", "year_2025_2026"];
-    for (const yr of deprecatedYears) {
-      db.run("DELETE FROM academic_years WHERE id = ?", [yr]);
-      db.run("DELETE FROM member_counts WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM annual_reports WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM census_reports WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM audited_statements WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM official_contacts WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM deadlines WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM state_members WHERE year_id = ?", [yr]);
-      db.run("DELETE FROM district_members WHERE year_id = ?", [yr]);
-    }
-  } catch (err) {
-    console.error("Error purging historical academic years:", err);
   }
 
   // --- Migration: Ensure initial District Users have default password hash if missing ---
@@ -1332,43 +1400,5 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
         "System initialized with Eastern Railway State, 9 Districts, and production-ready security credentials."
       ]
     );
-  }
-
-  // --- Production Readiness: Initial District Data Reset for all 9 Districts ---
-  try {
-    // 1. Reset all membership counts to 0 by default
-    db.run(`
-      UPDATE member_counts SET
-        bunnies = 0, bunny_aunties = 0, bulbul = 0, guide = 0, ranger = 0, scout = 0, rover = 0, cub = 0,
-        flock_leaders = 0, guide_captains = 0, ranger_leaders = 0, cub_masters = 0, lady_cub_masters = 0,
-        scout_masters = 0, rover_scout_leaders = 0,
-        professional_guides = 0, voluntary_commissioners = 0, support_staff = 0, professionals_staff = 0,
-        youth_total = 0, unit_leaders_total = 0, professionals_total = 0, grand_total = 0
-    `);
-
-    // 2. Reset all unit details to 0 by default
-    db.run(`
-      UPDATE unit_details SET
-        bulbul_flock = 0, guide_company = 0, ranger_team = 0,
-        cub_pack = 0, scout_troop = 0, rover_crew = 0
-    `);
-
-    // 3. Reset personal details in official_contacts to blank (preserve 18 positions)
-    db.run(`
-      UPDATE official_contacts SET
-        name = '', railway_designation = '', scouting_rank = '',
-        bsg_id = '', bsg_uid = '', email = '', phone = '', is_selected = 1
-    `);
-
-    // 4. Ensure statutory document records are completely empty (no uploaded documents)
-    db.run("DELETE FROM annual_reports");
-    db.run("DELETE FROM census_reports");
-    db.run("DELETE FROM audited_statements");
-    db.run("DELETE FROM district_members");
-
-    // 5. Reset basic organizational details fields to blank default
-    db.run("UPDATE districts SET address = '', phone = '', registration_no = ''");
-  } catch (err) {
-    console.error("Error executing initial district data reset:", err);
   }
 }

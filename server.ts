@@ -31,7 +31,7 @@ async function startServer() {
   // Initialize SQLite database
   try {
     await getDb();
-    console.log("ERBSG Database connected and seeded.");
+    console.log("ERBSG Persistent Database loaded and connected successfully.");
 
     // Automatic Financial Year check (runs hourly to detect April 1 transition)
     setInterval(() => {
