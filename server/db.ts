@@ -308,7 +308,8 @@ export async function getDb(): Promise<SqlJsDatabase> {
 
   const info = getDatabasePathInfo();
   const targetPath = info.resolvedPath;
-  const isCreationAllowed = process.env.ALLOW_DATABASE_CREATION === "true" || process.env.INIT_FRESH_DATABASE === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  const isCreationAllowed = process.env.ALLOW_DATABASE_CREATION === "true" || process.env.INIT_FRESH_DATABASE === "true" || !isProduction;
 
   // Requirement 8: Startup diagnostics that clearly show all details
   console.log("================================================================================");
