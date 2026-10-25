@@ -3,7 +3,7 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { getDb, ensureCurrentFinancialYear, getMaintenanceMode } from "./server/db.ts";
+import { getDb, ensureCurrentFinancialYear, getMaintenanceMode, queryOne } from "./server/db.ts";
 import { apiRouter } from "./server/routes.ts";
 
 process.env.DISABLE_HMR = "true";
@@ -48,21 +48,29 @@ async function startServer() {
   // Lightweight Health Check endpoint (accessible without authentication)
   app.get(["/api/health", "/health"], async (req, res) => {
     let dbStatus = "connected";
+    let dbError: string | null = null;
     try {
       const db = await getDb();
-      if (!db) dbStatus = "degraded";
-    } catch {
+      if (!db) {
+        dbStatus = "degraded";
+      } else {
+        queryOne("SELECT 1");
+      }
+    } catch (err: any) {
       dbStatus = "error";
+      dbError = err?.message || "Database not initialized";
     }
 
     const maint = getMaintenanceMode();
+    const isHealthy = dbStatus === "connected";
 
-    res.status(200).json({
-      status: "ok",
+    res.status(isHealthy ? 200 : 503).json({
+      status: isHealthy ? "ok" : "unhealthy",
       database: dbStatus,
+      error: dbError,
       app: "ERBSG Data Control Portal",
       state: "Eastern Railway",
-      maintenanceMode: maint.enabled,
+      maintenanceMode: maint?.enabled || false,
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
     });

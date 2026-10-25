@@ -31,9 +31,19 @@ export function isDeploymentSpecificPath(targetPath: string): boolean {
 export function getPersistentBaseDir(cwd = process.cwd()): string {
   const normalized = path.resolve(cwd).replace(/\\/g, "/");
 
-  // Check for Hostinger domain structure: /home/<user>/domains/<domain>
+  // Check for Hostinger domain structure with nodejs: /home/<user>/domains/<domain>/nodejs
+  const domainNodejsMatch = normalized.match(/^(\/home\/[^/]+\/domains\/[^/]+\/nodejs)/);
+  if (domainNodejsMatch) {
+    return domainNodejsMatch[1];
+  }
+
+  // If path is inside /domains/<domain>/current/nodejs or /domains/<domain>/hbuilds/.../nodejs,
+  // persistent base is /home/<user>/domains/<domain>/nodejs
   const domainMatch = normalized.match(/^(\/home\/[^/]+\/domains\/[^/]+)/);
   if (domainMatch) {
+    if (normalized.includes("/current/nodejs") || (normalized.includes("/hbuilds/") && normalized.includes("/nodejs"))) {
+      return `${domainMatch[1]}/nodejs`;
+    }
     return domainMatch[1];
   }
 
@@ -128,24 +138,40 @@ export function getDatabasePathInfo(): DatabasePathInfo {
   // 2. If DATABASE_PATH is NOT provided, search known persistent candidate locations for an existing database
   const potentialCandidates: { path: string; label: string }[] = [];
 
+  const domainMatch = cwd.match(/^(\/home\/[^/]+\/domains\/[^/]+)/);
+  if (domainMatch) {
+    potentialCandidates.push({
+      path: path.join(domainMatch[1], "nodejs", "data", "erbsg.sqlite"),
+      label: "Hostinger persistent Node.js data directory (nodejs/data/erbsg.sqlite)"
+    });
+    potentialCandidates.push({
+      path: path.join(domainMatch[1], "data", "erbsg.sqlite"),
+      label: "Hostinger persistent domain data directory (data/erbsg.sqlite)"
+    });
+    potentialCandidates.push({
+      path: path.join(domainMatch[1], "erbsg_storage", "erbsg.sqlite"),
+      label: "Hostinger persistent domain storage directory (erbsg_storage/erbsg.sqlite)"
+    });
+  }
+
   if (persistentBase !== cwd) {
     potentialCandidates.push({
       path: path.join(persistentBase, "data", "erbsg.sqlite"),
-      label: "Persistent domain data directory (data/erbsg.sqlite)"
+      label: "Persistent base data directory (data/erbsg.sqlite)"
     });
     potentialCandidates.push({
       path: path.join(persistentBase, "erbsg_storage", "erbsg.sqlite"),
-      label: "Persistent domain storage directory (erbsg_storage/erbsg.sqlite)"
+      label: "Persistent base storage directory (erbsg_storage/erbsg.sqlite)"
     });
     potentialCandidates.push({
       path: path.join(persistentBase, "erbsg.sqlite"),
-      label: "Persistent domain root directory (erbsg.sqlite)"
+      label: "Persistent base root directory (erbsg.sqlite)"
     });
   }
 
   // Check user home directory if different
   const userHomeMatch = cwd.match(/^(\/home\/[^/]+)/);
-  if (userHomeMatch && userHomeMatch[1] !== persistentBase) {
+  if (userHomeMatch) {
     potentialCandidates.push({
       path: path.join(userHomeMatch[1], "data", "erbsg.sqlite"),
       label: "Hostinger user home data directory"
@@ -185,9 +211,12 @@ export function getDatabasePathInfo(): DatabasePathInfo {
   let defaultPersistentPath: string;
   let sourceDesc: string;
 
-  if (persistentBase !== cwd) {
+  if (domainMatch) {
+    defaultPersistentPath = path.join(domainMatch[1], "nodejs", "data", "erbsg.sqlite");
+    sourceDesc = `Hostinger persistent Node.js data path (${defaultPersistentPath})`;
+  } else if (persistentBase !== cwd) {
     defaultPersistentPath = path.join(persistentBase, "data", "erbsg.sqlite");
-    sourceDesc = `Stable persistent default outside deployment directory (${persistentBase}/data/erbsg.sqlite)`;
+    sourceDesc = `Stable persistent default outside deployment directory (${defaultPersistentPath})`;
   } else {
     defaultPersistentPath = path.resolve(cwd, "data", "erbsg.sqlite");
     sourceDesc = "Standard default path (data/erbsg.sqlite)";
@@ -219,7 +248,7 @@ function ensureDbDirectory(filePath: string): void {
 }
 
 // Automatic rolling pre-startup backup before any startup logic
-function createPreStartupBackup(filePath: string): void {
+function createPreStartupBackup(filePath: string, prefix = "erbsg_autobackup"): void {
   try {
     if (!fs.existsSync(filePath)) return;
     const stats = fs.statSync(filePath);
@@ -235,9 +264,9 @@ function createPreStartupBackup(filePath: string): void {
     }
 
     const timestamp = Date.now();
-    const backupPath = path.join(backupDir, `erbsg_autobackup_${timestamp}.sqlite`);
+    const backupPath = path.join(backupDir, `${prefix}_${timestamp}.sqlite`);
     fs.copyFileSync(filePath, backupPath);
-    console.log(`[DATABASE SAFETY] Pre-startup backup snapshot created at: ${backupPath} (${(stats.size / 1024).toFixed(1)} KB)`);
+    console.log(`[DATABASE SAFETY] Backup snapshot created at: ${backupPath} (${(stats.size / 1024).toFixed(1)} KB)`);
 
     // Clean up older auto backups, keep the 5 most recent
     const files = fs.readdirSync(backupDir)
@@ -253,7 +282,7 @@ function createPreStartupBackup(filePath: string): void {
       }
     }
   } catch (err) {
-    console.warn("[DATABASE SAFETY] Warning: Could not create pre-startup backup:", err);
+    console.warn("[DATABASE SAFETY] Warning: Could not create backup snapshot:", err);
   }
 }
 
@@ -279,6 +308,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
 
   const info = getDatabasePathInfo();
   const targetPath = info.resolvedPath;
+  const isCreationAllowed = process.env.ALLOW_DATABASE_CREATION === "true" || process.env.INIT_FRESH_DATABASE === "true";
 
   // Requirement 8: Startup diagnostics that clearly show all details
   console.log("================================================================================");
@@ -293,22 +323,22 @@ export async function getDb(): Promise<SqlJsDatabase> {
     console.log(`  • Using Persistent Database:    YES`);
   } else {
     console.log(`  • ALLOW_DATABASE_CREATION:      "${process.env.ALLOW_DATABASE_CREATION || 'false'}"`);
+    console.log(`  • INIT_FRESH_DATABASE:          "${process.env.INIT_FRESH_DATABASE || 'false'}"`);
     console.log(`  • Candidates Searched:`);
     info.candidatesSearched.forEach((c, idx) => console.log(`      ${idx + 1}. ${c}`));
   }
   console.log("================================================================================");
 
-  // Requirement 1 & 4 & 9 & 15:
-  // If the database file does not exist, FAIL SAFELY and clearly. Never create a blank database!
+  // If the database file does not exist, FAIL SAFELY unless explicit creation flag is set
   if (!info.fileExists) {
-    if (process.env.ALLOW_DATABASE_CREATION !== "true") {
+    if (!isCreationAllowed) {
       const errorMsg =
         `[CRITICAL DATABASE SAFETY ERROR] Database file not found at persistent path: "${targetPath}".\n` +
         `ALLOW_DATABASE_CREATION is set to "${process.env.ALLOW_DATABASE_CREATION || 'false'}". Startup aborted to prevent creating a blank database and losing existing data.\n` +
-        `HOW TO RESOLVE ON HOSTINGER:\n` +
-        `1. Place your existing 'erbsg.sqlite' file in the persistent directory: "${targetPath}"\n` +
-        `2. OR set environment variable DATABASE_PATH to the exact path of your existing database on Hostinger\n` +
-        `3. Ensure file permissions allow reading and writing (chmod 644).`;
+        `HOW TO INITIALIZE A FRESH PRODUCTION DATABASE ON HOSTINGER:\n` +
+        `1. Set environment variable ALLOW_DATABASE_CREATION=true (or INIT_FRESH_DATABASE=true) in Hostinger.\n` +
+        `2. Start the application once so it initializes the database and seeds the State Admin and 9 District accounts.\n` +
+        `3. After successful startup, set ALLOW_DATABASE_CREATION=false in Hostinger to lock the database against accidental re-creation.`;
       console.error(errorMsg);
       throw new Error(errorMsg);
     }
@@ -320,6 +350,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
   }
 
   const SQL = await initSqlJs();
+  const isFreshDatabase = !info.fileExists;
 
   if (info.fileExists) {
     try {
@@ -328,37 +359,75 @@ export async function getDb(): Promise<SqlJsDatabase> {
       dbInstance = new SQL.Database(fileBuffer);
       console.log(`[DATABASE PERSISTENCE] Loaded existing ERBSG SQLite database successfully from disk: ${targetPath}`);
     } catch (e: any) {
-      // Requirement 18:
-      // If the database cannot be opened, the application FAILS SAFELY instead of silently creating a new empty production database!
       const errorMsg = `[CRITICAL DATABASE ERROR] Failed to load existing database file at "${targetPath}": ${e?.message || e}. Startup aborted to prevent data loss.`;
       console.error(errorMsg);
       throw new Error(errorMsg);
     }
   } else {
-    // Only reachable when ALLOW_DATABASE_CREATION === "true"
+    // Explicit fresh database creation allowed
+    console.log(`[DATABASE INITIALIZATION] Creating and initializing fresh production SQLite database at: ${targetPath}`);
+    ensureDbDirectory(targetPath);
     dbInstance = new SQL.Database();
-    console.warn(`[DATABASE PERSISTENCE WARNING] Initialized new empty SQLite database at: ${targetPath} (ALLOW_DATABASE_CREATION=true)`);
   }
 
-  // Run non-destructive schema migrations only
+  // Run schema initialization and idempotent seeding
   initSchemaAndSeed(dbInstance);
 
   // Ensure Session 2025-2026 and 2026-2027 exist for all 9 districts, preserving all historical data
   ensureSessionYear(2025, 2026, false, "ACTIVE");
   ensureSessionYear(2026, 2027, true, "ACTIVE");
 
-  // Ensure state admin password and official email are synchronized
+  // Ensure State Admin user exists only if absent or unhashed; NEVER reset password on every restart!
   try {
-    const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
-    dbInstance.run(
-      "UPDATE users SET password_hash = ?, email = 'erbsgevent2026@gmail.com' WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'",
-      [adminHash]
+    const adminCheck = queryOne<any>(
+      "SELECT id, password_hash FROM users WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'"
     );
+    if (!adminCheck) {
+      const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
+      dbInstance.run(
+        `INSERT INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
+         VALUES ('usr_state_admin', 'BSG-ER-STATE', 'erbsgevent2026@gmail.com', 'State Administrator (Eastern Railway)', '+91 33 2222 4567', ?, 'STATE_ADMIN', 'state_er', null, 'ACTIVE', 0)`,
+        [adminHash]
+      );
+    } else if (!adminCheck.password_hash || adminCheck.password_hash === "") {
+      const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
+      dbInstance.run(
+        "UPDATE users SET password_hash = ?, email = 'erbsgevent2026@gmail.com' WHERE id = ?",
+        [adminHash, adminCheck.id]
+      );
+    }
   } catch (syncErr) {
-    console.warn("Could not sync admin credentials on startup:", syncErr);
+    console.warn("Could not verify state admin credentials on startup:", syncErr);
   }
 
+  // Save changes atomically to disk
   saveDatabase();
+
+  // If this was a fresh database initialization, create an immediate baseline snapshot
+  if (isFreshDatabase) {
+    createPreStartupBackup(targetPath, "erbsg_fresh_seeded_initial");
+    console.log("================================================================================");
+    console.log("[DATABASE INITIALIZATION COMPLETED SUCCESSFULLY]");
+    console.log(`  • Fresh production database created and saved at:`);
+    console.log(`    "${targetPath}"`);
+    console.log(`  • State Administrator account seeded:`);
+    console.log(`    Login ID: BSG-ER-STATE`);
+    console.log(`  • 9 District User accounts seeded:`);
+    console.log(`    - Asansol District:      BSG287206516`);
+    console.log(`    - Central District:      BSG414635725`);
+    console.log(`    - CLW District:          BSG497632275`);
+    console.log(`    - Howrah District:       BSG778778724`);
+    console.log(`    - Jamalpur District:     BSG283090263`);
+    console.log(`    - Kanchrapara District:  BSG337400383`);
+    console.log(`    - Liluah District:       BSG918582829`);
+    console.log(`    - Malda District:        BSG896907989`);
+    console.log(`    - Sealdah District:      BSG454137323`);
+    console.log(`  • Initial baseline backup saved in backups directory.`);
+    console.log(`  • [ACTION REQUIRED] Set ALLOW_DATABASE_CREATION=false in your`);
+    console.log(`    Hostinger environment variables for standard production operation.`);
+    console.log("================================================================================");
+  }
+
   return dbInstance;
 }
 
