@@ -65,6 +65,90 @@ export function getPersistentBaseDir(cwd = process.cwd()): string {
   return cwd;
 }
 
+export interface DirectoryPermissionResult {
+  path: string;
+  exists: boolean;
+  canCreate: boolean;
+  canWrite: boolean;
+  canRead: boolean;
+  canRename: boolean;
+  isWritable: boolean;
+  error?: string;
+}
+
+/**
+ * Actively verifies filesystem permissions on the directory by testing
+ * directory creation, writing a temporary probe file, reading it,
+ * performing an atomic rename, and deleting the probe.
+ */
+export function testDirectoryPermissions(dirPath: string): DirectoryPermissionResult {
+  const result: DirectoryPermissionResult = {
+    path: dirPath,
+    exists: false,
+    canCreate: false,
+    canWrite: false,
+    canRead: false,
+    canRename: false,
+    isWritable: false
+  };
+
+  try {
+    if (!fs.existsSync(dirPath)) {
+      try {
+        fs.mkdirSync(dirPath, { recursive: true });
+        result.exists = true;
+        result.canCreate = true;
+      } catch (err: any) {
+        result.error = `Failed to create directory "${dirPath}": ${err?.message || err}`;
+        return result;
+      }
+    } else {
+      result.exists = true;
+      result.canCreate = true;
+    }
+
+    // Test write, read, atomic rename, and unlink inside dirPath
+    const testFileName = `.erbsg_perm_probe_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const testFilePath = path.join(dirPath, testFileName);
+    const testRenamedPath = `${testFilePath}.renamed`;
+
+    try {
+      fs.writeFileSync(testFilePath, "erbsg-permission-probe");
+      result.canWrite = true;
+    } catch (err: any) {
+      result.error = `Write test failed in "${dirPath}": ${err?.message || err}`;
+      return result;
+    }
+
+    try {
+      const readContent = fs.readFileSync(testFilePath, "utf8");
+      if (readContent === "erbsg-permission-probe") {
+        result.canRead = true;
+      }
+    } catch (err: any) {
+      result.error = `Read test failed in "${dirPath}": ${err?.message || err}`;
+    }
+
+    try {
+      fs.renameSync(testFilePath, testRenamedPath);
+      result.canRename = true;
+      fs.unlinkSync(testRenamedPath);
+    } catch (err: any) {
+      result.error = `Atomic rename test failed in "${dirPath}": ${err?.message || err}`;
+      try {
+        if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath);
+      } catch (_) {}
+      return result;
+    }
+
+    result.isWritable = result.exists && result.canWrite && result.canRead && result.canRename;
+  } catch (err: any) {
+    result.error = `Permission verification error for "${dirPath}": ${err?.message || err}`;
+  }
+
+  return result;
+}
+
 export interface DatabasePathInfo {
   resolvedPath: string;
   source: string;
@@ -72,168 +156,101 @@ export interface DatabasePathInfo {
   fileExists: boolean;
   parentDirExists: boolean;
   fileSizeBytes: number;
+  dirPermissions: DirectoryPermissionResult;
   candidatesSearched: string[];
 }
 
+let cachedDatabasePath: string | null = null;
+
 /**
- * Resolves the target database path with intelligent persistent storage discovery
- * and comprehensive diagnostic inspection.
+ * Resolves the target database path with strict validation, directory permission testing,
+ * and zero silent fallback to incorrect database files.
  */
 export function getDatabasePathInfo(): DatabasePathInfo {
   const candidatesSearched: string[] = [];
   const cwd = process.cwd();
   const persistentBase = getPersistentBaseDir(cwd);
 
-  // 1. If DATABASE_PATH environment variable is explicitly provided
+  // 1. If DATABASE_PATH environment variable is explicitly provided, use it strictly.
+  // Never silently fall back to other database files if this file is missing.
   if (process.env.DATABASE_PATH && process.env.DATABASE_PATH.trim()) {
     const rawPath = process.env.DATABASE_PATH.trim();
-    const resolved = path.resolve(rawPath);
-    candidatesSearched.push(resolved);
+    let resolved: string;
 
-    // If file exists at this path, use it directly
-    if (fs.existsSync(resolved)) {
-      const stats = fs.statSync(resolved);
-      return {
-        resolvedPath: resolved,
-        source: "Explicit DATABASE_PATH environment variable (Verified existing)",
-        isPersistent: !isDeploymentSpecificPath(resolved),
-        fileExists: true,
-        parentDirExists: fs.existsSync(path.dirname(resolved)),
-        fileSizeBytes: stats.size,
-        candidatesSearched
-      };
-    }
-
-    // If explicit path was relative and we are inside a Hostinger version directory,
-    // check if the file exists at the persistent base directory with that same relative path
-    if (!path.isAbsolute(rawPath) && isDeploymentSpecificPath(cwd)) {
-      const persistentCandidate = path.resolve(persistentBase, rawPath);
-      candidatesSearched.push(persistentCandidate);
-      if (fs.existsSync(persistentCandidate)) {
-        const stats = fs.statSync(persistentCandidate);
-        return {
-          resolvedPath: persistentCandidate,
-          source: `Resolved relative DATABASE_PATH against persistent base (${persistentBase})`,
-          isPersistent: true,
-          fileExists: true,
-          parentDirExists: fs.existsSync(path.dirname(persistentCandidate)),
-          fileSizeBytes: stats.size,
-          candidatesSearched
-        };
+    if (path.isAbsolute(rawPath)) {
+      resolved = path.normalize(rawPath);
+    } else {
+      // Relative path: if inside deployment directory, anchor to persistent base
+      if (isDeploymentSpecificPath(cwd)) {
+        resolved = path.resolve(persistentBase, rawPath);
+      } else {
+        resolved = path.resolve(cwd, rawPath);
       }
     }
 
-    // Explicit path does not exist on disk
+    candidatesSearched.push(resolved);
+    const parentDir = path.dirname(resolved);
+    const permResult = testDirectoryPermissions(parentDir);
+    const fileExists = fs.existsSync(resolved);
+    const stats = fileExists ? fs.statSync(resolved) : null;
+
+    cachedDatabasePath = resolved;
+
     return {
       resolvedPath: resolved,
-      source: "Explicit DATABASE_PATH environment variable (File not found on disk)",
+      source: fileExists
+        ? "Explicit DATABASE_PATH environment variable (Verified existing file)"
+        : "Explicit DATABASE_PATH environment variable (Target file pending creation)",
       isPersistent: !isDeploymentSpecificPath(resolved),
-      fileExists: false,
-      parentDirExists: fs.existsSync(path.dirname(resolved)),
-      fileSizeBytes: 0,
+      fileExists,
+      parentDirExists: permResult.exists,
+      fileSizeBytes: stats ? stats.size : 0,
+      dirPermissions: permResult,
       candidatesSearched
     };
   }
 
-  // 2. If DATABASE_PATH is NOT provided, search known persistent candidate locations for an existing database
-  const potentialCandidates: { path: string; label: string }[] = [];
-
-  const domainMatch = cwd.match(/^(\/home\/[^/]+\/domains\/[^/]+)/);
-  if (domainMatch) {
-    potentialCandidates.push({
-      path: path.join(domainMatch[1], "nodejs", "data", "erbsg.sqlite"),
-      label: "Hostinger persistent Node.js data directory (nodejs/data/erbsg.sqlite)"
-    });
-    potentialCandidates.push({
-      path: path.join(domainMatch[1], "data", "erbsg.sqlite"),
-      label: "Hostinger persistent domain data directory (data/erbsg.sqlite)"
-    });
-    potentialCandidates.push({
-      path: path.join(domainMatch[1], "erbsg_storage", "erbsg.sqlite"),
-      label: "Hostinger persistent domain storage directory (erbsg_storage/erbsg.sqlite)"
-    });
-  }
-
-  if (persistentBase !== cwd) {
-    potentialCandidates.push({
-      path: path.join(persistentBase, "data", "erbsg.sqlite"),
-      label: "Persistent base data directory (data/erbsg.sqlite)"
-    });
-    potentialCandidates.push({
-      path: path.join(persistentBase, "erbsg_storage", "erbsg.sqlite"),
-      label: "Persistent base storage directory (erbsg_storage/erbsg.sqlite)"
-    });
-    potentialCandidates.push({
-      path: path.join(persistentBase, "erbsg.sqlite"),
-      label: "Persistent base root directory (erbsg.sqlite)"
-    });
-  }
-
-  // Check user home directory if different
-  const userHomeMatch = cwd.match(/^(\/home\/[^/]+)/);
-  if (userHomeMatch) {
-    potentialCandidates.push({
-      path: path.join(userHomeMatch[1], "data", "erbsg.sqlite"),
-      label: "Hostinger user home data directory"
-    });
-    potentialCandidates.push({
-      path: path.join(userHomeMatch[1], "erbsg_storage", "erbsg.sqlite"),
-      label: "Hostinger user home storage directory"
-    });
-  }
-
-  // Local cwd data folder
-  potentialCandidates.push({
-    path: path.resolve(cwd, "data", "erbsg.sqlite"),
-    label: "Application current working directory (data/erbsg.sqlite)"
-  });
-
-  for (const cand of potentialCandidates) {
-    candidatesSearched.push(cand.path);
-    if (fs.existsSync(cand.path)) {
-      const stats = fs.statSync(cand.path);
-      if (stats.isFile()) {
-        return {
-          resolvedPath: cand.path,
-          source: `Auto-detected existing database: ${cand.label}`,
-          isPersistent: !isDeploymentSpecificPath(cand.path),
-          fileExists: true,
-          parentDirExists: true,
-          fileSizeBytes: stats.size,
-          candidatesSearched
-        };
-      }
-    }
-  }
-
-  // 3. No existing database file found anywhere:
-  // Determine the recommended persistent default
+  // 2. If DATABASE_PATH is NOT configured, determine the canonical persistent default:
+  // Prefer Hostinger persistent domain nodejs data directory if within domain structure.
   let defaultPersistentPath: string;
   let sourceDesc: string;
 
+  const domainMatch = cwd.match(/^(\/home\/[^/]+\/domains\/[^/]+)/);
   if (domainMatch) {
     defaultPersistentPath = path.join(domainMatch[1], "nodejs", "data", "erbsg.sqlite");
     sourceDesc = `Hostinger persistent Node.js data path (${defaultPersistentPath})`;
   } else if (persistentBase !== cwd) {
     defaultPersistentPath = path.join(persistentBase, "data", "erbsg.sqlite");
-    sourceDesc = `Stable persistent default outside deployment directory (${defaultPersistentPath})`;
+    sourceDesc = `Persistent base data directory (${defaultPersistentPath})`;
   } else {
     defaultPersistentPath = path.resolve(cwd, "data", "erbsg.sqlite");
-    sourceDesc = "Standard default path (data/erbsg.sqlite)";
+    sourceDesc = `Standard local data directory (${defaultPersistentPath})`;
   }
+
+  candidatesSearched.push(defaultPersistentPath);
+  const parentDir = path.dirname(defaultPersistentPath);
+  const permResult = testDirectoryPermissions(parentDir);
+  const fileExists = fs.existsSync(defaultPersistentPath);
+  const stats = fileExists ? fs.statSync(defaultPersistentPath) : null;
+
+  cachedDatabasePath = defaultPersistentPath;
 
   return {
     resolvedPath: defaultPersistentPath,
     source: sourceDesc,
     isPersistent: !isDeploymentSpecificPath(defaultPersistentPath),
-    fileExists: fs.existsSync(defaultPersistentPath),
-    parentDirExists: fs.existsSync(path.dirname(defaultPersistentPath)),
-    fileSizeBytes: fs.existsSync(defaultPersistentPath) ? fs.statSync(defaultPersistentPath).size : 0,
+    fileExists,
+    parentDirExists: permResult.exists,
+    fileSizeBytes: stats ? stats.size : 0,
+    dirPermissions: permResult,
     candidatesSearched
   };
 }
 
 export function getDatabasePath(): string {
+  if (cachedDatabasePath) {
+    return cachedDatabasePath;
+  }
   return getDatabasePathInfo().resolvedPath;
 }
 
@@ -311,13 +328,14 @@ export async function getDb(): Promise<SqlJsDatabase> {
   const isProduction = process.env.NODE_ENV === "production";
   const isCreationAllowed = process.env.ALLOW_DATABASE_CREATION === "true" || process.env.INIT_FRESH_DATABASE === "true" || !isProduction;
 
-  // Requirement 8: Startup diagnostics that clearly show all details
+  // Requirement: Startup diagnostics that clearly show all details
   console.log("================================================================================");
   console.log("[DATABASE PERSISTENCE AUDIT & STARTUP DIAGNOSTICS]");
   console.log(`  • Resolved DATABASE_PATH:        "${targetPath}"`);
   console.log(`  • Resolution Source:            ${info.source}`);
   console.log(`  • Is Persistent Location:       ${info.isPersistent ? "YES (outside version directory)" : "NO (WARNING: Inside deployment directory)"}`);
   console.log(`  • Parent Directory Exists:      ${info.parentDirExists ? "YES (" + path.dirname(targetPath) + ")" : "NO"}`);
+  console.log(`  • Parent Directory Permissions: ${info.dirPermissions.isWritable ? "OK (Writable & Atomic Rename Verified)" : "FAILED (" + (info.dirPermissions.error || "Permission Denied") + ")"}`);
   console.log(`  • Database File Exists:         ${info.fileExists ? "YES" : "NO"}`);
   if (info.fileExists) {
     console.log(`  • Database File Size:           ${(info.fileSizeBytes / 1024).toFixed(1)} KB`);
@@ -329,6 +347,17 @@ export async function getDb(): Promise<SqlJsDatabase> {
     info.candidatesSearched.forEach((c, idx) => console.log(`      ${idx + 1}. ${c}`));
   }
   console.log("================================================================================");
+
+  // Validate directory permissions before proceeding
+  if (!info.dirPermissions.isWritable) {
+    const permErrorMsg =
+      `[CRITICAL DATABASE PERMISSION ERROR] The target database directory is not writable by the Node.js process.\n` +
+      `Directory: "${info.dirPermissions.path}"\n` +
+      `Details: ${info.dirPermissions.error || "Permission denied for create/write/rename operations"}\n` +
+      `Hostinger Fix: Verify directory permissions (e.g. 0755/0775) on the persistent data directory.`;
+    console.error(permErrorMsg);
+    throw new Error(permErrorMsg);
+  }
 
   // If the database file does not exist, FAIL SAFELY unless explicit creation flag is set
   if (!info.fileExists) {
@@ -406,8 +435,25 @@ export async function getDb(): Promise<SqlJsDatabase> {
   // Save changes atomically to disk
   saveDatabase();
 
-  // If this was a fresh database initialization, create an immediate baseline snapshot
+  // If this was a fresh database initialization, verify integrity and create an immediate baseline snapshot
   if (isFreshDatabase) {
+    // Verify SQLite database integrity
+    try {
+      const integrityCheck = queryOne<any>("PRAGMA integrity_check");
+      const integrityStatus = integrityCheck ? (integrityCheck.integrity_check || Object.values(integrityCheck)[0]) : "unknown";
+      if (integrityStatus !== "ok") {
+        throw new Error(`Integrity check status: ${integrityStatus}`);
+      }
+      console.log(`  • PRAGMA integrity_check:       PASSED (ok)`);
+    } catch (intErr: any) {
+      console.error(`[DATABASE ERROR] Integrity check failed on fresh database:`, intErr);
+      throw intErr;
+    }
+
+    const totalUsers = queryOne<any>("SELECT COUNT(*) as count FROM users")?.count || 0;
+    const activeDistricts = queryOne<any>("SELECT COUNT(*) as count FROM districts WHERE status = 'ACTIVE'")?.count || 0;
+    const activeSessions = queryOne<any>("SELECT COUNT(*) as count FROM academic_years WHERE status = 'ACTIVE'")?.count || 0;
+
     createPreStartupBackup(targetPath, "erbsg_fresh_seeded_initial");
     console.log("================================================================================");
     console.log("[DATABASE INITIALIZATION COMPLETED SUCCESSFULLY]");
@@ -425,6 +471,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
     console.log(`    - Liluah District:       BSG918582829`);
     console.log(`    - Malda District:        BSG896907989`);
     console.log(`    - Sealdah District:      BSG454137323`);
+    console.log(`  • Verified seeded entities: ${totalUsers} users, ${activeDistricts} districts, ${activeSessions} active sessions`);
     console.log(`  • Initial baseline backup saved in backups directory.`);
     console.log(`  • [ACTION REQUIRED] Set ALLOW_DATABASE_CREATION=false in your`);
     console.log(`    Hostinger environment variables for standard production operation.`);
