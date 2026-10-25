@@ -383,14 +383,16 @@ export async function getDb(): Promise<SqlJsDatabase> {
       "SELECT id, password_hash FROM users WHERE bsg_id = 'BSG-ER-STATE' OR role = 'STATE_ADMIN'"
     );
     if (!adminCheck) {
-      const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
+      const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || "Admin@ERBSG2026";
+      const adminHash = bcrypt.hashSync(initialAdminPassword, 10);
       dbInstance.run(
         `INSERT INTO users (id, bsg_id, email, name, phone, password_hash, role, state_id, district_id, status, must_change_password)
          VALUES ('usr_state_admin', 'BSG-ER-STATE', 'erbsgevent2026@gmail.com', 'State Administrator (Eastern Railway)', '+91 33 2222 4567', ?, 'STATE_ADMIN', 'state_er', null, 'ACTIVE', 0)`,
         [adminHash]
       );
     } else if (!adminCheck.password_hash || adminCheck.password_hash === "") {
-      const adminHash = bcrypt.hashSync("Admin@ERBSG2026", 10);
+      const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || "Admin@ERBSG2026";
+      const adminHash = bcrypt.hashSync(initialAdminPassword, 10);
       dbInstance.run(
         "UPDATE users SET password_hash = ?, email = 'erbsgevent2026@gmail.com' WHERE id = ?",
         [adminHash, adminCheck.id]
@@ -1592,8 +1594,10 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
     // Hash passwords securely using bcrypt (NO PLAINTEXT STORAGE)
     const saltRounds = 10;
-    const adminPasswordHash = bcrypt.hashSync("Admin@ERBSG2026", saltRounds);
-    const defaultDistrictPasswordHash = bcrypt.hashSync("Test@1234", saltRounds);
+    const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || "Admin@ERBSG2026";
+    const initialDistrictPassword = process.env.INITIAL_DISTRICT_PASSWORD || "Test@1234";
+    const adminPasswordHash = bcrypt.hashSync(initialAdminPassword, saltRounds);
+    const defaultDistrictPasswordHash = bcrypt.hashSync(initialDistrictPassword, saltRounds);
 
     // 1. Seed State Admin
     db.run(

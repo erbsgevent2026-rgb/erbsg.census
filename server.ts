@@ -28,10 +28,12 @@ async function startServer() {
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
+  let dbInitError: string | null = null;
+
   // Initialize SQLite database
   try {
     await getDb();
-    console.log("ERBSG Persistent Database loaded and connected successfully.");
+    console.log("[DATABASE CONNECTED] ERBSG Persistent Database loaded and connected successfully.");
 
     // Automatic Financial Year check (runs hourly to detect April 1 transition)
     setInterval(() => {
@@ -41,14 +43,15 @@ async function startServer() {
         console.error("Auto FY check error:", e);
       }
     }, 60 * 60 * 1000);
-  } catch (err) {
-    console.error("Failed to initialize ERBSG Database:", err);
+  } catch (err: any) {
+    dbInitError = err?.message || String(err);
+    console.error("[CRITICAL DATABASE INIT ERROR] Failed to initialize ERBSG Database on startup:", dbInitError);
   }
 
   // Lightweight Health Check endpoint (accessible without authentication)
   app.get(["/api/health", "/health"], async (req, res) => {
     let dbStatus = "connected";
-    let dbError: string | null = null;
+    let dbError: string | null = dbInitError;
     try {
       const db = await getDb();
       if (!db) {
@@ -62,7 +65,7 @@ async function startServer() {
     }
 
     const maint = getMaintenanceMode();
-    const isHealthy = dbStatus === "connected";
+    const isHealthy = dbStatus === "connected" && !dbError;
 
     res.status(isHealthy ? 200 : 503).json({
       status: isHealthy ? "ok" : "unhealthy",
@@ -132,7 +135,11 @@ async function startServer() {
 
   // Ensure server listens on 0.0.0.0 and process.env.PORT
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`ERBSG Portal Server running at http://0.0.0.0:${PORT} (env: ${process.env.NODE_ENV || "development"})`);
+    if (dbInitError) {
+      console.warn(`[SERVER IN DEGRADED MODE] HTTP listening at http://0.0.0.0:${PORT}, but database is unavailable. API and login requests will return HTTP 503 until DATABASE_PATH is initialized.`);
+    } else {
+      console.log(`ERBSG Portal Server running at http://0.0.0.0:${PORT} (env: ${process.env.NODE_ENV || "development"})`);
+    }
   });
 }
 
