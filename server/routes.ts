@@ -20,7 +20,11 @@ import {
   createSupportFeedback,
   getSupportFeedback,
   getSupportFeedbackById,
-  updateSupportFeedback
+  updateSupportFeedback,
+  createBackupSnapshot,
+  listBackups,
+  restoreFromBackup,
+  getBackupDirectory
 } from "./db.ts";
 import { syncEntityToFirestore } from "./firestoreService.ts";
 import {
@@ -173,6 +177,44 @@ apiRouter.use((req: Request, res: Response, next) => {
   next();
 });
 
+// In-memory brute-force protection: tracks failed login attempts by IP + identifier
+interface FailedAttempt {
+  count: number;
+  resetAt: number;
+}
+const loginRateLimitMap = new Map<string, FailedAttempt>();
+
+function checkLoginRateLimit(key: string): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  const entry = loginRateLimitMap.get(key);
+  if (!entry) return { allowed: true, retryAfterSeconds: 0 };
+  if (now > entry.resetAt) {
+    loginRateLimitMap.delete(key);
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  // Allow up to 10 failed attempts before locking out for the remainder of the window
+  if (entry.count >= 10) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  }
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function recordFailedLoginAttempt(key: string): void {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15-minute window
+  const entry = loginRateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    loginRateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
+  } else {
+    entry.count += 1;
+  }
+}
+
+function clearLoginRateLimit(key: string): void {
+  loginRateLimitMap.delete(key);
+}
+
 // -------------------------------------------------------------
 // 1. AUTHENTICATION & SESSION
 // -------------------------------------------------------------
@@ -182,6 +224,16 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
 
   if (!identifier || !password) {
     res.status(400).json({ error: "BSG ID or Email and password are required" });
+    return;
+  }
+
+  const clientIp = req.ip || "unknown";
+  const rateLimitKey = `${clientIp}_${String(identifier).trim().toLowerCase()}`;
+  const rateCheck = checkLoginRateLimit(rateLimitKey);
+  if (!rateCheck.allowed) {
+    res.status(429).json({
+      error: `Too many failed login attempts. Please try again in ${rateCheck.retryAfterSeconds} seconds.`
+    });
     return;
   }
 
@@ -203,6 +255,7 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
   );
 
   if (!user) {
+    recordFailedLoginAttempt(rateLimitKey);
     res.status(401).json({ error: "Invalid credentials. Please check your BSG ID or password." });
     return;
   }
@@ -212,16 +265,10 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
     return;
   }
 
-  let passwordMatch = bcrypt.compareSync(password, user.password_hash);
-
-  // Safe fallback strictly for State Administrator initial credentials
-  if (!passwordMatch && user.role === "STATE_ADMIN" && !user.must_change_password) {
-    if (password === "Admin@1234" || password === "Admin@ERBSG2026") {
-      passwordMatch = true;
-    }
-  }
+  const passwordMatch = bcrypt.compareSync(password, user.password_hash);
 
   if (!passwordMatch) {
+    recordFailedLoginAttempt(rateLimitKey);
     logAuditAction({
       userId: user.id,
       userName: user.name,
@@ -238,13 +285,8 @@ apiRouter.post("/auth/login", (req: Request, res: Response) => {
     return;
   }
 
-  // Ensure database hash matches Admin@1234 if not in must_change_password state
-  if (user.role === "STATE_ADMIN" && (password === "Admin@1234" || password === "Admin@ERBSG2026") && !user.must_change_password) {
-    try {
-      const updatedHash = bcrypt.hashSync(password, 10);
-      runQuery("UPDATE users SET password_hash = ? WHERE id = ?", [updatedHash, user.id]);
-    } catch (_) {}
-  }
+  // Clear failed attempt tracking on successful password authentication
+  clearLoginRateLimit(rateLimitKey);
 
   // Check MFA if enabled
   if (user.mfa_enabled) {
@@ -2662,3 +2704,76 @@ apiRouter.put("/support/:id", authenticateToken, requireStateAdmin, (req: Reques
     ticket: updatedTicket
   });
 });
+
+// -------------------------------------------------------------
+// 12. ADMINISTRATIVE DATABASE BACKUP & RESTORE MANAGEMENT
+// -------------------------------------------------------------
+
+apiRouter.get("/admin/backups", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  try {
+    const backups = listBackups();
+    res.json({
+      success: true,
+      backupDir: getBackupDirectory(),
+      count: backups.length,
+      backups
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to list backups", details: err?.message });
+  }
+});
+
+apiRouter.post("/admin/backups/create", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
+  try {
+    const snapshot = createBackupSnapshot("erbsg_admin_manual");
+    if (!snapshot) {
+      res.status(500).json({ error: "Failed to create backup snapshot: Database file missing or empty" });
+      return;
+    }
+
+    logAuditAction({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      bsgId: req.user!.bsg_id,
+      role: req.user!.role,
+      action: "MANUAL_DATABASE_BACKUP_CREATED",
+      module: "DATABASE_MANAGEMENT",
+      details: `State Administrator created manual database backup snapshot: ${snapshot.filename}`,
+      ipAddress: req.ip
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Manual backup snapshot created successfully: ${snapshot.filename}`,
+      backup: snapshot
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to create manual backup", details: err?.message });
+  }
+});
+
+apiRouter.post("/admin/backups/:filename/restore", authenticateToken, requireStateAdmin, async (req: Request, res: Response) => {
+  const { filename } = req.params;
+  try {
+    await restoreFromBackup(filename);
+
+    logAuditAction({
+      userId: req.user!.id,
+      userName: req.user!.name,
+      bsgId: req.user!.bsg_id,
+      role: req.user!.role,
+      action: "DATABASE_RESTORED_FROM_BACKUP",
+      module: "DATABASE_MANAGEMENT",
+      details: `State Administrator restored production database from backup snapshot: ${filename}`,
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: `Production database restored successfully from snapshot "${filename}". Current state backed up prior to restore.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "Database restore failed", details: err?.message });
+  }
+});
+

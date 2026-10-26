@@ -264,6 +264,14 @@ function ensureDbDirectory(filePath: string): void {
   }
 }
 
+export function getBackupDirectory(filePath?: string): string {
+  if (process.env.DATABASE_BACKUP_DIR && process.env.DATABASE_BACKUP_DIR.trim()) {
+    return path.resolve(process.env.DATABASE_BACKUP_DIR.trim());
+  }
+  const dbPath = filePath || getDatabasePath();
+  return path.join(path.dirname(dbPath), "backups");
+}
+
 // Automatic rolling pre-startup backup before any startup logic
 function createPreStartupBackup(filePath: string, prefix = "erbsg_autobackup"): void {
   try {
@@ -271,11 +279,7 @@ function createPreStartupBackup(filePath: string, prefix = "erbsg_autobackup"): 
     const stats = fs.statSync(filePath);
     if (stats.size === 0) return;
 
-    // Use dedicated DATABASE_BACKUP_DIR if configured, otherwise default to <database_dir>/backups
-    const backupDir = process.env.DATABASE_BACKUP_DIR && process.env.DATABASE_BACKUP_DIR.trim()
-      ? path.resolve(process.env.DATABASE_BACKUP_DIR.trim())
-      : path.join(path.dirname(filePath), "backups");
-
+    const backupDir = getBackupDirectory(filePath);
     if (!fs.existsSync(backupDir)) {
       fs.mkdirSync(backupDir, { recursive: true });
     }
@@ -303,6 +307,92 @@ function createPreStartupBackup(filePath: string, prefix = "erbsg_autobackup"): 
   }
 }
 
+export function createBackupSnapshot(prefix = "erbsg_manual_backup"): { path: string; filename: string; size: number } | null {
+  const targetPath = getDatabasePath();
+  if (!fs.existsSync(targetPath)) return null;
+  const stats = fs.statSync(targetPath);
+  if (stats.size === 0) return null;
+
+  const backupDir = getBackupDirectory(targetPath);
+  if (!fs.existsSync(backupDir)) {
+    fs.mkdirSync(backupDir, { recursive: true });
+  }
+
+  const timestamp = Date.now();
+  const filename = `${prefix}_${timestamp}.sqlite`;
+  const backupPath = path.join(backupDir, filename);
+  fs.copyFileSync(targetPath, backupPath);
+  console.log(`[BACKUP CREATED] ${backupPath} (${(stats.size / 1024).toFixed(1)} KB)`);
+  return { path: backupPath, filename, size: stats.size };
+}
+
+export function listBackups(): Array<{ filename: string; size: number; mtime: string }> {
+  const targetPath = getDatabasePath();
+  const backupDir = getBackupDirectory(targetPath);
+  if (!fs.existsSync(backupDir)) return [];
+  return fs.readdirSync(backupDir)
+    .filter((f) => f.endsWith(".sqlite"))
+    .map((f) => {
+      const stats = fs.statSync(path.join(backupDir, f));
+      return {
+        filename: f,
+        size: stats.size,
+        mtime: stats.mtime.toISOString()
+      };
+    })
+    .sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
+}
+
+export async function restoreFromBackup(filename: string): Promise<boolean> {
+  const targetPath = getDatabasePath();
+  const backupDir = getBackupDirectory(targetPath);
+  const backupFile = path.join(backupDir, path.basename(filename));
+
+  if (!fs.existsSync(backupFile)) {
+    throw new Error(`Backup file "${filename}" not found in backup directory`);
+  }
+
+  // First create a safety backup of current database before restoring
+  createBackupSnapshot("erbsg_pre_restore_safety");
+
+  // Copy backup over targetPath atomically
+  const tempPath = `${targetPath}.restore_tmp_${Date.now()}`;
+  fs.copyFileSync(backupFile, tempPath);
+  fs.renameSync(tempPath, targetPath);
+
+  // Reload database instance into memory
+  const SQL = await initSqlJs();
+  const fileBuffer = fs.readFileSync(targetPath);
+  dbInstance = new SQL.Database(fileBuffer);
+  dbInstance.run("PRAGMA foreign_keys = ON;");
+  console.log(`[DATABASE RESTORED] Successfully restored from ${filename}`);
+  return true;
+}
+
+let isTransactionActive = false;
+
+export function runInTransaction<T>(callback: () => T): T {
+  if (!dbInstance) throw new Error("Database not initialized");
+  if (isTransactionActive) {
+    return callback();
+  }
+  isTransactionActive = true;
+  dbInstance.run("BEGIN TRANSACTION;");
+  try {
+    const result = callback();
+    dbInstance.run("COMMIT;");
+    isTransactionActive = false;
+    saveDatabase();
+    return result;
+  } catch (err) {
+    try {
+      dbInstance.run("ROLLBACK;");
+    } catch (_) {}
+    isTransactionActive = false;
+    throw err;
+  }
+}
+
 export function saveDatabase(): void {
   if (!dbInstance) return;
   const targetPath = getDatabasePath();
@@ -312,11 +402,12 @@ export function saveDatabase(): void {
     const buffer = Buffer.from(data);
     
     // Write atomically via temporary file to prevent corruption on unexpected crash or reboot
-    const tempPath = `${targetPath}.tmp_${Date.now()}`;
+    const tempPath = `${targetPath}.tmp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     fs.writeFileSync(tempPath, buffer);
     fs.renameSync(tempPath, targetPath);
   } catch (err) {
     console.error(`[DATABASE ERROR] Failed to save SQLite database to "${targetPath}":`, err);
+    throw err;
   }
 }
 
@@ -387,7 +478,17 @@ export async function getDb(): Promise<SqlJsDatabase> {
       console.log(`[DATABASE PERSISTENCE AUDIT] Opening verified persistent database from: "${targetPath}"`);
       const fileBuffer = fs.readFileSync(targetPath);
       dbInstance = new SQL.Database(fileBuffer);
+      dbInstance.run("PRAGMA foreign_keys = ON;");
       console.log(`[DATABASE PERSISTENCE] Loaded existing ERBSG SQLite database successfully from disk: ${targetPath}`);
+      try {
+        const integrity = queryOne<any>("PRAGMA integrity_check");
+        const status = integrity ? (integrity.integrity_check || Object.values(integrity)[0]) : "unknown";
+        if (status !== "ok") {
+          console.warn(`[DATABASE INTEGRITY WARNING] Existing database PRAGMA integrity_check reported: ${status}`);
+        } else {
+          console.log(`[DATABASE INTEGRITY] Existing database integrity verified: ok`);
+        }
+      } catch (_) {}
     } catch (e: any) {
       const errorMsg = `[CRITICAL DATABASE ERROR] Failed to load existing database file at "${targetPath}": ${e?.message || e}. Startup aborted to prevent data loss.`;
       console.error(errorMsg);
@@ -398,6 +499,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
     console.log(`[DATABASE INITIALIZATION] Creating and initializing fresh production SQLite database at: ${targetPath}`);
     ensureDbDirectory(targetPath);
     dbInstance = new SQL.Database();
+    dbInstance.run("PRAGMA foreign_keys = ON;");
   }
 
   // Run schema initialization and idempotent seeding
@@ -484,7 +586,9 @@ export async function getDb(): Promise<SqlJsDatabase> {
 export function runQuery(sql: string, params: any[] = []): void {
   if (!dbInstance) throw new Error("Database not initialized");
   dbInstance.run(sql, params);
-  saveDatabase();
+  if (!isTransactionActive) {
+    saveDatabase();
+  }
 }
 
 export function queryAll<T = any>(sql: string, params: any[] = []): T[] {

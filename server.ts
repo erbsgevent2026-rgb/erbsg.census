@@ -3,7 +3,7 @@ import http from "http";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { getDb, ensureCurrentFinancialYear, getMaintenanceMode, queryOne } from "./server/db.ts";
+import { getDb, ensureCurrentFinancialYear, getMaintenanceMode, queryOne, saveDatabase } from "./server/db.ts";
 import { apiRouter } from "./server/routes.ts";
 
 process.env.DISABLE_HMR = "true";
@@ -28,6 +28,13 @@ async function startServer() {
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
+  // Validate production security configuration
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || process.env.JWT_SECRET === "erbsg_production_jwt_secret_key_railway_scouts_guides") {
+      console.warn("[SECURITY AUDIT] WARNING: Using default or weak JWT_SECRET in production. Set a random 64-character secret in Hostinger environment variables.");
+    }
+  }
+
   let dbInitError: string | null = null;
 
   // Initialize SQLite database
@@ -48,7 +55,7 @@ async function startServer() {
     console.error("[CRITICAL DATABASE INIT ERROR] Failed to initialize ERBSG Database on startup:", dbInitError);
   }
 
-  // Lightweight Health Check endpoint (accessible without authentication)
+  // Truthful and robust Health Check endpoint (accessible without authentication)
   app.get(["/api/health", "/health"], async (req, res) => {
     let dbStatus = "connected";
     let dbError: string | null = dbInitError;
@@ -67,11 +74,13 @@ async function startServer() {
     const maint = getMaintenanceMode();
     const isHealthy = dbStatus === "connected" && !dbError;
 
+    // Standardized health check schema per specification
     res.status(isHealthy ? 200 : 503).json({
-      status: isHealthy ? "ok" : "unhealthy",
+      status: isHealthy ? "healthy" : "unhealthy",
       database: dbStatus,
       error: dbError,
       app: "ERBSG Data Control Portal",
+      organization: "Eastern Railway Bharat Scouts and Guides",
       state: "Eastern Railway",
       maintenanceMode: maint?.enabled || false,
       timestamp: new Date().toISOString(),
@@ -132,6 +141,31 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Graceful shutdown handling for SIGTERM and SIGINT
+  const gracefulShutdown = (signal: string) => {
+    console.log(`[SHUTDOWN] Received ${signal}. Flushing pending database transactions to disk...`);
+    try {
+      saveDatabase();
+      console.log("[SHUTDOWN] Database safely saved to disk.");
+    } catch (saveErr) {
+      console.error("[SHUTDOWN] Warning: Error saving database on shutdown:", saveErr);
+    }
+
+    httpServer.close(() => {
+      console.log("[SHUTDOWN] HTTP server closed gracefully.");
+      process.exit(0);
+    });
+
+    // Enforce shutdown if connections do not close within 10 seconds
+    setTimeout(() => {
+      console.error("[SHUTDOWN] Forcefully shutting down after timeout.");
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
   // Ensure server listens on 0.0.0.0 and process.env.PORT
   httpServer.listen(PORT, "0.0.0.0", () => {
