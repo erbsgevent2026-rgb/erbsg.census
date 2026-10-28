@@ -3,12 +3,15 @@ import type { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import path from "path";
 import {
   queryAll,
   queryOne,
   runQuery,
   saveDatabase,
   ensureCurrentFinancialYear,
+  getCurrentSessionYear,
+  runInTransaction,
   getMaintenanceMode,
   setMaintenanceMode,
   getCensusConfirmation,
@@ -36,10 +39,56 @@ import {
   sendPortalEmail,
   generatePasswordResetToken,
   verifyPasswordResetToken,
+  revokeToken,
   JWT_SECRET
 } from "./auth.ts";
 
 export const apiRouter = express.Router();
+
+/**
+ * Validates PDF uploads: verifies .pdf extension, sanitizes directory traversal,
+ * validates MIME type, and ensures file does not exceed maximum allowed size (15MB).
+ */
+export function validateAndSanitizePdfUpload(
+  rawFileName: string,
+  fileData: string,
+  maxSizeBytes: number = 15 * 1024 * 1024
+): { valid: true; sanitizedName: string; sizeBytes: number } | { valid: false; error: string } {
+  if (!rawFileName || typeof rawFileName !== "string") {
+    return { valid: false, error: "File name is required." };
+  }
+
+  // Defend against path traversal, control characters, and slashes
+  const sanitizedName = path.basename(rawFileName).trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+  if (!sanitizedName.toLowerCase().endsWith(".pdf")) {
+    return { valid: false, error: "Only official PDF documents (.pdf) are allowed." };
+  }
+
+  if (!fileData || typeof fileData !== "string") {
+    return { valid: false, error: "File data is required." };
+  }
+
+  // Validate base64 encoding and PDF header/mime
+  const base64Index = fileData.indexOf(";base64,");
+  let base64Content = fileData;
+  if (base64Index !== -1) {
+    const mime = fileData.substring(5, base64Index).toLowerCase();
+    if (mime !== "application/pdf" && mime !== "application/octet-stream") {
+      return { valid: false, error: "Invalid document MIME type. Expected PDF." };
+    }
+    base64Content = fileData.substring(base64Index + 8);
+  }
+
+  const estimatedSize = Math.floor((base64Content.length * 3) / 4);
+  if (estimatedSize > maxSizeBytes) {
+    return {
+      valid: false,
+      error: `File size exceeds the 15MB limit (provided ~${(estimatedSize / (1024 * 1024)).toFixed(1)}MB).`
+    };
+  }
+
+  return { valid: true, sanitizedName, sizeBytes: estimatedSize };
+}
 
 // Store SSE connections for real-time live synchronization
 const syncClients: Response[] = [];
@@ -603,14 +652,20 @@ apiRouter.post("/auth/forgot-password", (req: Request, res: Response) => {
     ipAddress: req.ip
   });
 
-  res.json({
+  const responseData: any = {
     success: true,
     message: `A secure password reset link has been dispatched to registered email (${user.email}).`,
     email: user.email,
-    bsgId: user.bsg_id,
-    resetLink,
-    token: resetToken
-  });
+    bsgId: user.bsg_id
+  };
+
+  // Only expose link in non-production development environments for local testing without mail server
+  if (process.env.NODE_ENV !== "production") {
+    responseData.resetLink = resetLink;
+    responseData.token = resetToken;
+  }
+
+  res.json(responseData);
 });
 
 // Reset Password with Token
@@ -696,6 +751,32 @@ apiRouter.post("/auth/toggle-mfa", authenticateToken, (req: Request, res: Respon
     mfaSecret,
     message: `MFA has been ${newState ? "enabled. Verification code: 123456 or 654321" : "disabled"}.`
   });
+});
+
+// Logout - Revoke authentication token and audit session end
+apiRouter.post("/auth/logout", authenticateToken, (req: Request, res: Response) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (token) {
+    revokeToken(token);
+  }
+
+  if (req.user) {
+    logAuditAction({
+      userId: req.user.id,
+      userName: req.user.name,
+      bsgId: req.user.bsg_id,
+      role: req.user.role,
+      action: "LOGOUT",
+      module: "AUTHENTICATION",
+      stateId: req.user.state_id,
+      districtId: req.user.district_id || undefined,
+      details: `User ${req.user.bsg_id} logged out. Token revoked from active session pool.`,
+      ipAddress: req.ip
+    });
+  }
+
+  res.json({ success: true, message: "Logged out successfully." });
 });
 
 // -------------------------------------------------------------
@@ -1018,10 +1099,16 @@ apiRouter.post("/district-users/:id/force-password-change", authenticateToken, r
 
 apiRouter.post("/district-users/:id/toggle-status", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
   const { id } = req.params;
-  const user = queryOne<any>("SELECT status, name, bsg_id, email FROM users WHERE id = ?", [id]);
+  const user = queryOne<any>("SELECT status, name, bsg_id, email, role FROM users WHERE id = ?", [id]);
 
   if (!user) {
     res.status(404).json({ error: "User not found." });
+    return;
+  }
+
+  // Prevent lockout: State Admin account cannot be deactivated
+  if (user.role === "STATE_ADMIN" || user.bsg_id === "BSG-ER-STATE" || user.id === req.user!.id) {
+    res.status(400).json({ error: "Action rejected: The State Administrator account cannot be deactivated." });
     return;
   }
 
@@ -1058,7 +1145,7 @@ apiRouter.post("/district-users/:id/toggle-status", authenticateToken, requireSt
 
 const handleDashboardStats = (req: Request, res: Response) => {
   const user = req.user!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (user.role === "STATE_ADMIN") {
     // Total Districts
@@ -1173,9 +1260,9 @@ const handleDashboardStats = (req: Request, res: Response) => {
 
     res.json({
       role: "STATE_ADMIN",
-      totalDistricts: distCount?.total || 9,
-      activeDistricts: distCount?.active || 9,
-      districtUsers: userCount?.total || 9,
+      totalDistricts: Number(distCount?.total ?? 0),
+      activeDistricts: Number(distCount?.active ?? 0),
+      districtUsers: Number(userCount?.total ?? 0),
       totalMembers: memberAgg?.grand_total || 0,
       youthMembership: memberAgg?.youth_total || 0,
       unitLeaders: memberAgg?.unit_leaders_total || 0,
@@ -1306,7 +1393,7 @@ apiRouter.get("/dashboard/summary", authenticateToken, handleDashboardStats);
 apiRouter.get("/members", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_cen") : user.district_id!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 
@@ -1472,7 +1559,7 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
 apiRouter.get("/unit-details", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_cen") : user.district_id!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 
@@ -1708,7 +1795,7 @@ const FIXED_OFFICIAL_POSITIONS = [
 apiRouter.get("/official-contacts", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_asn") : user.district_id!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 
@@ -1867,32 +1954,45 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
     return;
   }
 
-  // Clear existing and re-insert the 18 official positions for this district and session
-  runQuery("DELETE FROM official_contacts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
+  // Atomically clear and re-insert the 18 official positions for this district and session
+  runInTransaction(() => {
+    runQuery("DELETE FROM official_contacts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
+
+    for (let i = 0; i < FIXED_OFFICIAL_POSITIONS.length; i++) {
+      const posName = FIXED_OFFICIAL_POSITIONS[i];
+      const posOrder = i + 1;
+      const c = contacts.find((item: any) => item.position_order === posOrder || item.position_name === posName) || contacts[i] || {};
+
+      const id = `oc_${district_id}_${year_id}_pos_${posOrder}`;
+      const name = (c.name || "").trim();
+      const bsgId = (c.bsg_id || c.bsg_uid || "").trim();
+      const phone = (c.phone || "").trim();
+      const email = (c.email || "").trim();
+
+      runQuery(
+        `INSERT INTO official_contacts (
+          id, state_id, district_id, year_id, position_order, position_name,
+          name, bsg_id, bsg_uid, designation, scouting_rank,
+          email, phone, is_selected
+        ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          id, district_id, year_id, posOrder, posName,
+          name, bsgId, bsgId, posName, posName,
+          email, phone
+        ]
+      );
+    }
+  });
 
   for (let i = 0; i < FIXED_OFFICIAL_POSITIONS.length; i++) {
     const posName = FIXED_OFFICIAL_POSITIONS[i];
     const posOrder = i + 1;
     const c = contacts.find((item: any) => item.position_order === posOrder || item.position_name === posName) || contacts[i] || {};
-
     const id = `oc_${district_id}_${year_id}_pos_${posOrder}`;
     const name = (c.name || "").trim();
     const bsgId = (c.bsg_id || c.bsg_uid || "").trim();
     const phone = (c.phone || "").trim();
     const email = (c.email || "").trim();
-
-    runQuery(
-      `INSERT INTO official_contacts (
-        id, state_id, district_id, year_id, position_order, position_name,
-        name, bsg_id, bsg_uid, designation, scouting_rank,
-        email, phone, is_selected
-      ) VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        id, district_id, year_id, posOrder, posName,
-        name, bsgId, bsgId, posName, posName,
-        email, phone
-      ]
-    );
 
     syncEntityToFirestore("official_contacts", id, "CREATE", {
       id,
@@ -1909,8 +2009,6 @@ apiRouter.post("/official-contacts", authenticateToken, (req: Request, res: Resp
       updated_at: new Date().toISOString()
     });
   }
-
-  saveDatabase();
 
   logAuditAction({
     userId: user.id,
@@ -1971,10 +2069,13 @@ apiRouter.post("/annual-reports", authenticateToken, (req: Request, res: Respons
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  if (!file_name || !file_data) {
-    res.status(400).json({ error: "File name and PDF data are required." });
+  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
     return;
   }
+  const cleanFileName = validation.sanitizedName;
+  const cleanFileSize = validation.sizeBytes;
 
   // Check existing version
   const existing = queryOne<any>(
@@ -1987,7 +2088,7 @@ apiRouter.post("/annual-reports", authenticateToken, (req: Request, res: Respons
   runQuery(
     `INSERT INTO annual_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by)
      VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?)`,
-    [id, district_id, year_id, file_name, file_size || 500000, file_data, version, user.name]
+    [id, district_id, year_id, cleanFileName, cleanFileSize, file_data, version, user.name]
   );
 
   logAuditAction({
@@ -2080,10 +2181,13 @@ apiRouter.post("/census-reports", authenticateToken, (req: Request, res: Respons
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  if (!file_name || !file_data) {
-    res.status(400).json({ error: "File name and PDF data are required." });
+  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
     return;
   }
+  const cleanFileName = validation.sanitizedName;
+  const cleanFileSize = validation.sizeBytes;
 
   // Check existing version
   const existing = queryOne<any>(
@@ -2096,7 +2200,7 @@ apiRouter.post("/census-reports", authenticateToken, (req: Request, res: Respons
   runQuery(
     `INSERT INTO census_reports (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by)
      VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?)`,
-    [id, district_id, year_id, file_name, file_size || 500000, file_data, version, user.name]
+    [id, district_id, year_id, cleanFileName, cleanFileSize, file_data, version, user.name]
   );
 
   logAuditAction({
@@ -2189,10 +2293,13 @@ apiRouter.post("/audited-statements", authenticateToken, (req: Request, res: Res
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  if (!file_name || !file_data) {
-    res.status(400).json({ error: "File name and PDF data are required." });
+  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
     return;
   }
+  const cleanFileName = validation.sanitizedName;
+  const cleanFileSize = validation.sizeBytes;
 
   const existing = queryOne<any>(
     "SELECT id, version FROM audited_statements WHERE district_id = ? AND year_id = ? ORDER BY version DESC LIMIT 1",
@@ -2204,7 +2311,7 @@ apiRouter.post("/audited-statements", authenticateToken, (req: Request, res: Res
   runQuery(
     `INSERT INTO audited_statements (id, state_id, district_id, year_id, file_name, file_size, file_data, version, uploaded_by)
      VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?)`,
-    [id, district_id, year_id, file_name, file_size || 500000, file_data, version, user.name]
+    [id, district_id, year_id, cleanFileName, cleanFileSize, file_data, version, user.name]
   );
 
   logAuditAction({
@@ -2266,18 +2373,19 @@ apiRouter.delete("/audited-statements/:id", authenticateToken, (req: Request, re
 // -------------------------------------------------------------
 
 apiRouter.get("/state-members", authenticateToken, (req: Request, res: Response) => {
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
   const members = queryAll<any>("SELECT * FROM state_members WHERE year_id = ? ORDER BY designation ASC", [yearId]);
   res.json(members);
 });
 
 apiRouter.post("/state-members", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
   const { name, bsg_uid, designation, email, phone, year_id } = req.body;
+  const targetYearId = year_id || getCurrentSessionYear().id;
   const id = `sm_${Date.now()}`;
   runQuery(
     `INSERT INTO state_members (id, state_id, year_id, name, bsg_uid, designation, email, phone)
      VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?)`,
-    [id, year_id || "year_2026_2027", name, bsg_uid, designation, email || null, phone || null]
+    [id, targetYearId, name, bsg_uid, designation, email || null, phone || null]
   );
   broadcastSyncEvent("STATE_MEMBERS_UPDATED", { id });
   res.status(201).json({ message: "State member added.", id });
@@ -2293,7 +2401,7 @@ apiRouter.delete("/state-members/:id", authenticateToken, requireStateAdmin, (re
 apiRouter.get("/district-members", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_cen") : user.district_id!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 
@@ -2310,11 +2418,12 @@ apiRouter.post("/district-members", authenticateToken, (req: Request, res: Respo
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
+  const targetYearId = year_id || getCurrentSessionYear().id;
   const id = `dm_${Date.now()}`;
   runQuery(
     `INSERT INTO district_members (id, state_id, district_id, year_id, name, bsg_uid, designation, email, phone)
      VALUES (?, 'state_er', ?, ?, ?, ?, ?, ?, ?)`,
-    [id, district_id, year_id || "year_2026_2027", name, bsg_uid, designation, email || null, phone || null]
+    [id, district_id, targetYearId, name, bsg_uid, designation, email || null, phone || null]
   );
 
   broadcastSyncEvent("DISTRICT_MEMBERS_UPDATED", { districtId: district_id });

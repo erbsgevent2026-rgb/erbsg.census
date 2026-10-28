@@ -67,12 +67,34 @@ export function generateToken(user: AuthenticatedUser): string {
   );
 }
 
+const revokedTokens = new Set<string>();
+
+export function isTokenRevoked(token: string): boolean {
+  return revokedTokens.has(token);
+}
+
+export function revokeToken(token: string): void {
+  revokedTokens.add(token);
+  if (revokedTokens.size > 10000) {
+    const it = revokedTokens.values();
+    for (let i = 0; i < 2000; i++) {
+      const val = it.next().value;
+      if (val) revokedTokens.delete(val);
+    }
+  }
+}
+
 export function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
     res.status(401).json({ error: "Access denied: Missing authentication token" });
+    return;
+  }
+
+  if (isTokenRevoked(token)) {
+    res.status(401).json({ error: "Session token has been invalidated. Please log in again." });
     return;
   }
 

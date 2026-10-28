@@ -98,7 +98,7 @@ In Hostinger hPanel Node.js settings:
 In Hostinger Git Deployment or SSH terminal:
 ```bash
 git pull origin main
-npm install --omit=dev
+npm install
 npm run build
 ```
 *(Or use Hostinger's automatic Deploy button).*

@@ -623,6 +623,21 @@ export function getCurrentFinancialYear(now = new Date()): { startYear: number; 
 }
 
 /**
+ * Returns the currently active/selected official session year from the database.
+ * Dynamically updates whenever State Admin sets a new active session or a new FY is created.
+ */
+export function getCurrentSessionYear(): { id: string; label: string } {
+  if (!dbInstance) return { id: "year_2026_2027", label: "2026-2027" };
+  try {
+    const current = queryOne<any>("SELECT id, label FROM academic_years WHERE is_current = 1");
+    if (current) return { id: current.id, label: current.label };
+    const anyYear = queryOne<any>("SELECT id, label FROM academic_years ORDER BY label DESC LIMIT 1");
+    if (anyYear) return { id: anyYear.id, label: anyYear.label };
+  } catch (_) {}
+  return { id: "year_2026_2027", label: "2026-2027" };
+}
+
+/**
  * Creates or ensures a session year is available for all 9 districts.
  * Non-destructive: Existing district data is 100% preserved and never overwritten.
  */
