@@ -110,6 +110,18 @@ async function startServer() {
     res.status(404).json({ error: `API route ${req.method} ${req.path} not found` });
   });
 
+  // Centralized API error handler to prevent stack traces leaking to clients in production
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error(`[API ERROR] ${req.method} ${req.path}:`, err?.message || err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    res.status(err?.status || 500).json({
+      error: process.env.NODE_ENV === "production" ? "Internal server error. Please contact the administrator." : (err?.message || "Internal server error"),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // Vite middleware setup in development; static production assets in production
   if (process.env.NODE_ENV !== "production") {
     if (process.env.APPLET_ID || process.env.GOOGLE_RUNTIME) {
