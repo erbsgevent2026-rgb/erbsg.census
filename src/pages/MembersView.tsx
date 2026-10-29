@@ -69,6 +69,8 @@ export const MembersView: React.FC = () => {
     voluntary_commissioners: 0,
     support_staff: 0,
     professionals_staff: 0,
+    voluntary_commissioners_gw: 0,
+    support_staff_gw: 0,
     youth_total: 0,
     unit_leaders_total: 0,
     professionals_total: 0,
@@ -112,7 +114,34 @@ export const MembersView: React.FC = () => {
       setLoading(true);
       const res = await api.getMembers(targetDistrictId, selectedYear);
       if (res.data) {
-        setMembers(res.data);
+        const d = res.data;
+        const profTotal =
+          (Number(d.professionals_staff) || 0) +
+          (Number(d.voluntary_commissioners) || 0) +
+          (Number(d.support_staff) || 0) +
+          (Number(d.professional_guides) || 0) +
+          (Number(d.voluntary_commissioners_gw) || 0) +
+          (Number(d.support_staff_gw) || 0);
+        const yTotal =
+          (Number(d.bulbul) || 0) +
+          (Number(d.guide) || 0) +
+          (Number(d.ranger) || 0) +
+          (Number(d.cub) || 0) +
+          (Number(d.scout) || 0) +
+          (Number(d.rover) || 0);
+        const lTotal =
+          (Number(d.flock_leaders) || 0) +
+          (Number(d.guide_captains) || 0) +
+          (Number(d.ranger_leaders) || 0) +
+          (Number(d.cub_masters) || 0) +
+          (Number(d.scout_masters) || 0) +
+          (Number(d.rover_scout_leaders) || 0) +
+          (Number(d.lady_cub_masters) || 0);
+        setMembers({
+          ...d,
+          professionals_total: profTotal,
+          grand_total: yTotal + lTotal + profTotal,
+        });
       }
       if (res.deadline) {
         setDeadline(res.deadline);
@@ -125,7 +154,34 @@ export const MembersView: React.FC = () => {
       try {
         const firestoreData = await getMemberCountsFirestore(targetDistrictId, selectedYear);
         if (firestoreData) {
-          setMembers(firestoreData);
+          const d = firestoreData;
+          const profTotal =
+            (Number(d.professionals_staff) || 0) +
+            (Number(d.voluntary_commissioners) || 0) +
+            (Number(d.support_staff) || 0) +
+            (Number(d.professional_guides) || 0) +
+            (Number(d.voluntary_commissioners_gw) || 0) +
+            (Number(d.support_staff_gw) || 0);
+          const yTotal =
+            (Number(d.bulbul) || 0) +
+            (Number(d.guide) || 0) +
+            (Number(d.ranger) || 0) +
+            (Number(d.cub) || 0) +
+            (Number(d.scout) || 0) +
+            (Number(d.rover) || 0);
+          const lTotal =
+            (Number(d.flock_leaders) || 0) +
+            (Number(d.guide_captains) || 0) +
+            (Number(d.ranger_leaders) || 0) +
+            (Number(d.cub_masters) || 0) +
+            (Number(d.scout_masters) || 0) +
+            (Number(d.rover_scout_leaders) || 0) +
+            (Number(d.lady_cub_masters) || 0);
+          setMembers({
+            ...d,
+            professionals_total: profTotal,
+            grand_total: yTotal + lTotal + profTotal,
+          });
         } else {
           setStatusMessage({ type: "error", text: err.message || "Failed to load member records." });
         }
@@ -253,11 +309,16 @@ export const MembersView: React.FC = () => {
         (Number(updated.rover_scout_leaders) || 0) +
         (Number(updated.lady_cub_masters) || 0);
 
+      // Section 4: Staff Subtotal = sum of all six Section 4 fields:
+      // Professional Scouters (SW) + Voluntary Commissioners of SW + Support Staff (SW)
+      // + Professional Scouters (GW) + Voluntary Commissioners of GW + Support Staff (GW)
       const professionals_total =
-        (Number(updated.professional_guides) || 0) +
+        (Number(updated.professionals_staff) || 0) +
         (Number(updated.voluntary_commissioners) || 0) +
         (Number(updated.support_staff) || 0) +
-        (Number(updated.professionals_staff) || 0);
+        (Number(updated.professional_guides) || 0) +
+        (Number(updated.voluntary_commissioners_gw) || 0) +
+        (Number(updated.support_staff_gw) || 0);
 
       const grand_total = youth_total + unit_leaders_total + professionals_total;
 
@@ -445,21 +506,6 @@ export const MembersView: React.FC = () => {
               <Building2 className="w-3.5 h-3.5 text-emerald-600" />
               <span>{districtName}</span>
             </div>
-          )}
-
-          {/* Confirm & Review Button for District User (or View Submitted for Locked / Admin) */}
-          {!isStateAdmin && !isConfirmed && (
-            <button
-              type="button"
-              onClick={() => {
-                setCertified(false);
-                setShowReviewModal(true);
-              }}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
-            >
-              <Eye className="w-4 h-4" />
-              <span>Confirm & Review</span>
-            </button>
           )}
 
           {/* View Summary Button when locked or for Admin review */}
@@ -716,10 +762,10 @@ export const MembersView: React.FC = () => {
         )}
 
         <div className="p-5 space-y-4">
-          {/* Female Wing Units */}
+          {/* Guide Wing Units */}
           <div>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-              Female Wing Units
+              {isStateAdmin ? "Guide Wing Units" : "Guide Wing"}
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
@@ -781,10 +827,10 @@ export const MembersView: React.FC = () => {
             </div>
           </div>
 
-          {/* Male Wing Units */}
+          {/* Scout Wing Units */}
           <div className="pt-2 border-t border-slate-100 dark:border-slate-750">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-              Male Wing Units
+              {isStateAdmin ? "Scout Wing Units" : "Scout Wing"}
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
@@ -876,10 +922,10 @@ export const MembersView: React.FC = () => {
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Female Wing */}
+          {/* Guide Wing */}
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-              Female Wing
+              Guide Wing
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
@@ -909,10 +955,10 @@ export const MembersView: React.FC = () => {
             </div>
           </div>
 
-          {/* Male Wing */}
+          {/* Scout Wing */}
           <div className="pt-2 border-t border-slate-100 dark:border-slate-750">
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-              Male Wing
+              Scout Wing
             </span>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
@@ -1006,10 +1052,10 @@ export const MembersView: React.FC = () => {
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
               Cub, Scout & Rover Leadership
             </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className={`grid grid-cols-1 sm:grid-cols-2 ${isStateAdmin ? "md:grid-cols-4" : "md:grid-cols-3"} gap-4`}>
               {[
                 { label: "Cub Masters & Assistants", key: "cub_masters" as const },
-                { label: "Lady Cub Masters", key: "lady_cub_masters" as const },
+                ...(isStateAdmin ? [{ label: "Lady Cub Masters", key: "lady_cub_masters" as const }] : []),
                 { label: "Scout Masters & Assistants", key: "scout_masters" as const },
                 { label: "Rover Scout Leaders & Assistants", key: "rover_scout_leaders" as const },
               ].map((cat) => (
@@ -1060,32 +1106,78 @@ export const MembersView: React.FC = () => {
           </span>
         </div>
 
-        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: "Professional Guides", key: "professional_guides" as const },
-            { label: "Voluntary Commissioners", key: "voluntary_commissioners" as const },
-            { label: "Support Staff", key: "support_staff" as const },
-            { label: "Professionals / Staff", key: "professionals_staff" as const },
-          ].map((cat) => (
-            <div key={cat.key}>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 truncate" title={cat.label}>
-                {cat.label}
-              </label>
-              <input
-                type="number"
-                min="0"
-                disabled={!isEditable}
-                value={members[cat.key] || ""}
-                onChange={(e) => handleInputChange(cat.key, e.target.value)}
-                className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none transition ${
-                  !isEditable
-                    ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-not-allowed"
-                    : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
-                }`}
-                placeholder="0"
-              />
+        <div className="p-5 space-y-4">
+          {/* FIRST LINE — SW (3 separate cards) */}
+          <div>
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+              Scout Wing (SW)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                { label: "Professional Scouters", key: "professionals_staff" as const },
+                { label: "Voluntary Commissioners of SW", key: "voluntary_commissioners" as const },
+                { label: "Support Staff (SW)", key: "support_staff" as const },
+              ].map((cat) => (
+                <div key={cat.key}>
+                  <label
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 leading-snug break-words whitespace-normal"
+                    title={cat.label}
+                  >
+                    {cat.label}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={!isEditable}
+                    value={members[cat.key] ?? ""}
+                    onChange={(e) => handleInputChange(cat.key, e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none transition ${
+                      !isEditable
+                        ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-not-allowed"
+                        : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
+                    }`}
+                    placeholder="0"
+                  />
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
+
+          {/* SECOND LINE — GW (3 separate cards) */}
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-750">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
+              Guide Wing (GW)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                { label: "Professional Scouters", key: "professional_guides" as const },
+                { label: "Voluntary Commissioners of GW", key: "voluntary_commissioners_gw" as const },
+                { label: "Support Staff (GW)", key: "support_staff_gw" as const },
+              ].map((cat) => (
+                <div key={cat.key}>
+                  <label
+                    className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 leading-snug break-words whitespace-normal"
+                    title={cat.label}
+                  >
+                    {cat.label}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={!isEditable}
+                    value={members[cat.key] ?? ""}
+                    onChange={(e) => handleInputChange(cat.key, e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg text-sm font-semibold focus:outline-none transition ${
+                      !isEditable
+                        ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-not-allowed"
+                        : "bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-amber-500"
+                    }`}
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1340,10 +1432,12 @@ export const MembersView: React.FC = () => {
                       <span className="text-slate-600 dark:text-slate-400 truncate">Cub Masters & Assistants:</span>
                       <span className="font-bold text-slate-900 dark:text-white">{members.cub_masters}</span>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
-                      <span className="text-slate-600 dark:text-slate-400 truncate">Lady Cub Masters:</span>
-                      <span className="font-bold text-slate-900 dark:text-white">{members.lady_cub_masters}</span>
-                    </div>
+                    {isStateAdmin && (
+                      <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
+                        <span className="text-slate-600 dark:text-slate-400 truncate">Lady Cub Masters:</span>
+                        <span className="font-bold text-slate-900 dark:text-white">{members.lady_cub_masters}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
                       <span className="text-slate-600 dark:text-slate-400 truncate">Scout Masters & Assistants:</span>
                       <span className="font-bold text-slate-900 dark:text-white">{members.scout_masters || 0}</span>
@@ -1368,20 +1462,28 @@ export const MembersView: React.FC = () => {
                   </div>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
-                      <span className="text-slate-600 dark:text-slate-400">Professional Guides:</span>
-                      <span className="font-bold text-slate-900 dark:text-white">{members.professional_guides}</span>
+                      <span className="text-slate-600 dark:text-slate-400">Professional Scouters (SW):</span>
+                      <span className="font-bold text-slate-900 dark:text-white">{members.professionals_staff}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
-                      <span className="text-slate-600 dark:text-slate-400">Voluntary Commissioners:</span>
+                      <span className="text-slate-600 dark:text-slate-400">Voluntary Commissioners of SW:</span>
                       <span className="font-bold text-slate-900 dark:text-white">{members.voluntary_commissioners}</span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
-                      <span className="text-slate-600 dark:text-slate-400">Support Staff:</span>
+                      <span className="text-slate-600 dark:text-slate-400">Support Staff (SW):</span>
                       <span className="font-bold text-slate-900 dark:text-white">{members.support_staff}</span>
                     </div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
+                      <span className="text-slate-600 dark:text-slate-400">Professional Scouters (GW):</span>
+                      <span className="font-bold text-slate-900 dark:text-white">{members.professional_guides}</span>
+                    </div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-750">
+                      <span className="text-slate-600 dark:text-slate-400">Voluntary Commissioners of GW:</span>
+                      <span className="font-bold text-slate-900 dark:text-white">{members.voluntary_commissioners_gw ?? 0}</span>
+                    </div>
                     <div className="flex justify-between py-1">
-                      <span className="text-slate-600 dark:text-slate-400">Professionals / Staff:</span>
-                      <span className="font-bold text-slate-900 dark:text-white">{members.professionals_staff}</span>
+                      <span className="text-slate-600 dark:text-slate-400">Support Staff (GW):</span>
+                      <span className="font-bold text-slate-900 dark:text-white">{members.support_staff_gw ?? 0}</span>
                     </div>
                   </div>
                 </div>

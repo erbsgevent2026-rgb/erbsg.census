@@ -52,7 +52,7 @@ export const apiRouter = express.Router();
 export function validateAndSanitizePdfUpload(
   rawFileName: string,
   fileData: string,
-  maxSizeBytes: number = 15 * 1024 * 1024
+  maxSizeBytes: number = 200 * 1024
 ): { valid: true; sanitizedName: string; sizeBytes: number } | { valid: false; error: string } {
   if (!rawFileName || typeof rawFileName !== "string") {
     return { valid: false, error: "File name is required." };
@@ -83,7 +83,7 @@ export function validateAndSanitizePdfUpload(
   if (estimatedSize > maxSizeBytes) {
     return {
       valid: false,
-      error: `File size exceeds the 15MB limit (provided ~${(estimatedSize / (1024 * 1024)).toFixed(1)}MB).`
+      error: "File size must not exceed 200 KB."
     };
   }
 
@@ -1415,10 +1415,17 @@ apiRouter.get("/members", authenticateToken, (req: Request, res: Response) => {
       (Number(safeData.scout) || 0) +
       (Number(safeData.rover) || 0) +
       (Number(safeData.cub) || 0);
+    safeData.professionals_total =
+      (Number(safeData.professionals_staff) || 0) +
+      (Number(safeData.voluntary_commissioners) || 0) +
+      (Number(safeData.support_staff) || 0) +
+      (Number(safeData.professional_guides) || 0) +
+      (Number(safeData.voluntary_commissioners_gw) || 0) +
+      (Number(safeData.support_staff_gw) || 0);
     safeData.grand_total =
       safeData.youth_total +
       (Number(safeData.unit_leaders_total) || 0) +
-      (Number(safeData.professionals_total) || 0);
+      safeData.professionals_total;
   } else {
     safeData = {
       district_id: targetDistrictId,
@@ -1426,6 +1433,7 @@ apiRouter.get("/members", authenticateToken, (req: Request, res: Response) => {
       bulbul: 0, guide: 0, ranger: 0, scout: 0, rover: 0, cub: 0,
       flock_leaders: 0, guide_captains: 0, ranger_leaders: 0, cub_masters: 0, lady_cub_masters: 0,
       professional_guides: 0, voluntary_commissioners: 0, support_staff: 0, professionals_staff: 0,
+      voluntary_commissioners_gw: 0, support_staff_gw: 0,
       youth_total: 0, unit_leaders_total: 0, professionals_total: 0, grand_total: 0
     };
   }
@@ -1481,11 +1489,14 @@ apiRouter.put("/members", authenticateToken, (req: Request, res: Response) => {
   const voluntary_commissioners = Math.max(0, parseInt(c.voluntary_commissioners || 0));
   const support_staff = Math.max(0, parseInt(c.support_staff || 0));
   const professionals_staff = Math.max(0, parseInt(c.professionals_staff || 0));
+  const voluntary_commissioners_gw = Math.max(0, parseInt(c.voluntary_commissioners_gw || 0));
+  const support_staff_gw = Math.max(0, parseInt(c.support_staff_gw || 0));
 
   // Automatic calculations as mandated (Youth: Bulbuls, Guides, Rangers, Cubs, Scouts, Rovers)
   const youth_total = bulbul + guide + ranger + cub + scout + rover;
   const unit_leaders_total = flock_leaders + guide_captains + ranger_leaders + cub_masters + scout_masters + rover_scout_leaders + lady_cub_masters;
-  const professionals_total = professional_guides + voluntary_commissioners + support_staff + professionals_staff;
+  // Section 4: Staff Subtotal = sum of all six Section 4 fields
+  const professionals_total = professionals_staff + voluntary_commissioners + support_staff + professional_guides + voluntary_commissioners_gw + support_staff_gw;
   const grand_total = youth_total + unit_leaders_total + professionals_total;
 
   const existing = queryOne("SELECT id FROM member_counts WHERE district_id = ? AND year_id = ?", [district_id, year_id]);
@@ -2069,7 +2080,12 @@ apiRouter.post("/annual-reports", authenticateToken, (req: Request, res: Respons
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (file_size && Number(file_size) > 200 * 1024) {
+    res.status(400).json({ error: "File size must not exceed 200 KB." });
+    return;
+  }
+
+  const validation = validateAndSanitizePdfUpload(file_name, file_data, 200 * 1024);
   if (!validation.valid) {
     res.status(400).json({ error: validation.error });
     return;
@@ -2118,7 +2134,7 @@ apiRouter.get("/annual-reports/:id", authenticateToken, (req: Request, res: Resp
   res.json(report);
 });
 
-apiRouter.delete("/annual-reports/:id", authenticateToken, (req: Request, res: Response) => {
+apiRouter.delete("/annual-reports/:id", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
   const { id } = req.params;
   const report = queryOne<any>("SELECT district_id, file_name FROM annual_reports WHERE id = ?", [id]);
   if (!report) {
@@ -2181,7 +2197,12 @@ apiRouter.post("/census-reports", authenticateToken, (req: Request, res: Respons
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (file_size && Number(file_size) > 200 * 1024) {
+    res.status(400).json({ error: "File size must not exceed 200 KB." });
+    return;
+  }
+
+  const validation = validateAndSanitizePdfUpload(file_name, file_data, 200 * 1024);
   if (!validation.valid) {
     res.status(400).json({ error: validation.error });
     return;
@@ -2230,7 +2251,7 @@ apiRouter.get("/census-reports/:id", authenticateToken, (req: Request, res: Resp
   res.json(report);
 });
 
-apiRouter.delete("/census-reports/:id", authenticateToken, (req: Request, res: Response) => {
+apiRouter.delete("/census-reports/:id", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
   const { id } = req.params;
   const report = queryOne<any>("SELECT district_id, file_name FROM census_reports WHERE id = ?", [id]);
   if (!report) {
@@ -2293,7 +2314,12 @@ apiRouter.post("/audited-statements", authenticateToken, (req: Request, res: Res
 
   if (!enforceDistrictAccess(req, res, district_id)) return;
 
-  const validation = validateAndSanitizePdfUpload(file_name, file_data);
+  if (file_size && Number(file_size) > 200 * 1024) {
+    res.status(400).json({ error: "File size must not exceed 200 KB." });
+    return;
+  }
+
+  const validation = validateAndSanitizePdfUpload(file_name, file_data, 200 * 1024);
   if (!validation.valid) {
     res.status(400).json({ error: validation.error });
     return;
@@ -2341,7 +2367,7 @@ apiRouter.get("/audited-statements/:id", authenticateToken, (req: Request, res: 
   res.json(stmt);
 });
 
-apiRouter.delete("/audited-statements/:id", authenticateToken, (req: Request, res: Response) => {
+apiRouter.delete("/audited-statements/:id", authenticateToken, requireStateAdmin, (req: Request, res: Response) => {
   const { id } = req.params;
   const stmt = queryOne<any>("SELECT district_id, file_name FROM audited_statements WHERE id = ?", [id]);
   if (!stmt) {

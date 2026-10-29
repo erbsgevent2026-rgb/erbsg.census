@@ -97,8 +97,8 @@ export const CensusReportsView: React.FC = () => {
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      setStatusMessage({ type: "error", text: "File size exceeds the 15 MB limit." });
+    if (file.size > 200 * 1024) {
+      setStatusMessage({ type: "error", text: "File size must not exceed 200 KB." });
       return;
     }
 
@@ -294,7 +294,7 @@ export const CensusReportsView: React.FC = () => {
                       {uploadFile ? uploadFile.name : "Choose PDF from computer"}
                     </span>
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      PDF format only • Max file size: 15 MB
+                      PDF format only • Max file size: 200 KB
                     </span>
                   </label>
                 </div>
@@ -396,7 +396,7 @@ export const CensusReportsView: React.FC = () => {
                     <th className="px-3 py-2.5">UPLOAD DATE</th>
                     <th className="px-3 py-2.5 text-center">VIEW</th>
                     <th className="px-3 py-2.5 text-center">PRINT</th>
-                    <th className="px-3 py-2.5 text-center">ACTION</th>
+                    {isStateAdmin && <th className="px-3 py-2.5 text-center">ACTION</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
@@ -448,15 +448,17 @@ export const CensusReportsView: React.FC = () => {
                             <Printer className="w-3.5 h-3.5" />
                           </button>
                         </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <button
-                            onClick={() => setDocumentToDelete(report)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition cursor-pointer"
-                            title="Delete Report"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
+                        {isStateAdmin && (
+                          <td className="px-3 py-2.5 text-center">
+                            <button
+                              onClick={() => setDocumentToDelete(report)}
+                              className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md transition cursor-pointer"
+                              title="Delete Report"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -481,7 +483,7 @@ export const CensusReportsView: React.FC = () => {
       )}
 
       {/* In-App Delete Confirmation Modal */}
-      {documentToDelete && (
+      {isStateAdmin && documentToDelete && (
         <DeleteConfirmationModal
           isOpen={!!documentToDelete}
           onClose={() => setDocumentToDelete(null)}

@@ -492,7 +492,7 @@ async function runProductionReadinessAudit() {
   }
 
   // ---------------------------------------------------------------------------
-  // TEST 18: File Upload Sanitization and PDF Validation
+  // TEST 18: File Upload Sanitization and 200 KB PDF Validation
   // ---------------------------------------------------------------------------
   try {
     const validPdfResult = routesModule.validateAndSanitizePdfUpload(
@@ -508,19 +508,28 @@ async function runProductionReadinessAudit() {
       "data:application/octet-stream;base64,AAAA"
     );
 
+    // Test 200 KB limit (204,800 bytes)
+    const largeContent = Buffer.alloc(250 * 1024).toString("base64");
+    const oversizedPdfResult = routesModule.validateAndSanitizePdfUpload(
+      "Oversized_Report.pdf",
+      `data:application/pdf;base64,${largeContent}`
+    );
+
     const passed =
       validPdfResult.valid === true &&
       traversalResult.valid === true &&
       traversalResult.sanitizedName === "passwd.pdf" &&
-      nonPdfResult.valid === false;
+      nonPdfResult.valid === false &&
+      oversizedPdfResult.valid === false &&
+      oversizedPdfResult.error === "File size must not exceed 200 KB.";
 
     recordTest(
-      "Test 18: File Upload Sanitization and PDF Validation",
+      "Test 18: File Upload Sanitization and 200 KB PDF Validation",
       passed,
-      `Valid PDF accepted, directory traversal safely sanitized to basename ('${(traversalResult as any).sanitizedName}'), non-PDF rejected ('${(nonPdfResult as any).error}')`
+      `Valid PDF accepted, directory traversal safely sanitized ('${(traversalResult as any).sanitizedName}'), non-PDF rejected, and oversized file (>200 KB) rejected with exact message: '${(oversizedPdfResult as any).error}'`
     );
   } catch (e: any) {
-    recordTest("Test 18: File Upload Sanitization and PDF Validation", false, e.message);
+    recordTest("Test 18: File Upload Sanitization and 200 KB PDF Validation", false, e.message);
   }
 
   // ---------------------------------------------------------------------------
@@ -554,6 +563,49 @@ async function runProductionReadinessAudit() {
     );
   } catch (e: any) {
     recordTest("Test 20: Dynamic Active Session Resolution", false, e.message);
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEST 21: Statutory Document Deletion Restrictions (District User 403 Forbidden)
+  // ---------------------------------------------------------------------------
+  try {
+    const distUserReq: any = {
+      user: {
+        id: "usr_dist_asn",
+        role: "DISTRICT_USER",
+        bsg_id: "BSG287206516",
+        district_id: "dist_asn"
+      }
+    };
+    let districtStatus = 0;
+    const distMockRes: any = {
+      status: (code: number) => {
+        districtStatus = code;
+        return { json: () => {} };
+      }
+    };
+    authModule.requireStateAdmin(distUserReq, distMockRes, () => {});
+
+    const adminReq: any = {
+      user: {
+        id: "usr_admin",
+        role: "STATE_ADMIN",
+        bsg_id: "BSG-ER-STATE"
+      }
+    };
+    let adminProceeded = false;
+    authModule.requireStateAdmin(adminReq, {} as any, () => {
+      adminProceeded = true;
+    });
+
+    const passed = districtStatus === 403 && adminProceeded;
+    recordTest(
+      "Test 21: Statutory Document Deletion Restrictions",
+      passed,
+      `District Users are strictly blocked with HTTP 403 Forbidden on document deletion, while State Admin deletion permission is retained`
+    );
+  } catch (e: any) {
+    recordTest("Test 21: Statutory Document Deletion Restrictions", false, e.message);
   }
 
   // Clean up test workspace

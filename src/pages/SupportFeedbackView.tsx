@@ -18,12 +18,12 @@ import {
   Eye,
   Loader2,
   X,
-  ExternalLink,
   ChevronRight,
   MessageCircle,
   Check,
   Tag,
-  AlertTriangle
+  AlertTriangle,
+  Phone
 } from "lucide-react";
 
 export const SupportFeedbackView: React.FC = () => {
@@ -269,18 +269,8 @@ export const SupportFeedbackView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <a
-            href={mailtoUrl}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-bold transition shadow-xs cursor-pointer"
-            title="Open email client with pre-filled support address"
-          >
-            <Mail className="w-4 h-4 text-blue-600" />
-            <span>Contact Support ({officialEmail})</span>
-            <ExternalLink className="w-3 h-3 text-slate-400" />
-          </a>
-
-          {!isStateAdmin && (
+        {!isStateAdmin && (
+          <div className="flex items-center gap-2.5 flex-wrap">
             <button
               onClick={() => setShowSubmitModal(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer"
@@ -288,8 +278,8 @@ export const SupportFeedbackView: React.FC = () => {
               <Send className="w-4 h-4" />
               <span>Submit New Request</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {statusMessage && (
@@ -314,33 +304,108 @@ export const SupportFeedbackView: React.FC = () => {
         </div>
       )}
 
-      {/* Official Direct Support Email Banner */}
-      <div className="bg-linear-to-r from-blue-900 to-indigo-950 text-white p-5 rounded-xl shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Mail className="w-4 h-4 text-blue-300" />
-            <span className="font-extrabold text-sm sm:text-base">
-              Official Eastern Railway State Support Contact
-            </span>
+      {/* Official Direct Support Contact Banner */}
+      <div className="bg-linear-to-r from-blue-900 to-indigo-950 text-white p-5 rounded-xl shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <LifeBuoy className="w-5 h-5 text-amber-300" />
+              <span className="font-extrabold text-sm sm:text-base">
+                Official Eastern Railway State Support Contact
+              </span>
+            </div>
+            <p className="text-xs text-blue-200/90 max-w-xl">
+              For direct inquiries, formal communication, technical assistance, or urgent escalation, reach the State Administration directly via email or official helpline numbers:
+            </p>
           </div>
-          <p className="text-xs text-blue-200/90 max-w-xl">
-            For direct inquiries, formal communication, or emergency escalation, reach the State Administration directly at:{" "}
-            <a
-              href={`mailto:${officialEmail}`}
-              className="text-amber-300 font-bold underline hover:text-amber-200"
-            >
-              {officialEmail}
-            </a>
-          </p>
+
+          <a
+            href={mailtoUrl}
+            className="flex items-center gap-2 px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-lg shadow-sm transition shrink-0 self-start sm:self-auto cursor-pointer"
+          >
+            <Mail className="w-4 h-4 text-slate-950" />
+            <span>Email State HQ</span>
+          </a>
         </div>
 
-        <a
-          href={mailtoUrl}
-          className="flex items-center gap-2 px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-lg shadow-sm transition shrink-0 cursor-pointer"
-        >
-          <Mail className="w-4 h-4 text-slate-950" />
-          <span>Email State HQ</span>
-        </a>
+        {/* Contact Channels Grid: Email & 3 Official Mobile Numbers */}
+        <div className="pt-3 border-t border-blue-800/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          {/* Official Email */}
+          <div className="bg-white/10 dark:bg-black/20 backdrop-blur-xs p-3 rounded-lg border border-white/10 flex items-center gap-2.5">
+            <div className="p-2 bg-blue-500/20 text-blue-300 rounded-md shrink-0">
+              <Mail className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300 block">
+                Official Support Email
+              </span>
+              <a
+                href={`mailto:${officialEmail}`}
+                className="font-bold text-white hover:text-amber-300 transition truncate block"
+                title={`Email ${officialEmail}`}
+              >
+                {officialEmail}
+              </a>
+            </div>
+          </div>
+
+          {/* Official Mobile 1 */}
+          <div className="bg-white/10 dark:bg-black/20 backdrop-blur-xs p-3 rounded-lg border border-white/10 flex items-center gap-2.5">
+            <div className="p-2 bg-emerald-500/20 text-emerald-300 rounded-md shrink-0">
+              <Phone className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">
+                Official Helpline 1
+              </span>
+              <a
+                href="tel:+919875681727"
+                className="font-bold text-white hover:text-amber-300 transition block tracking-wide"
+                title="Call +91 9875681727"
+              >
+                +91 9875681727
+              </a>
+            </div>
+          </div>
+
+          {/* Official Mobile 2 */}
+          <div className="bg-white/10 dark:bg-black/20 backdrop-blur-xs p-3 rounded-lg border border-white/10 flex items-center gap-2.5">
+            <div className="p-2 bg-emerald-500/20 text-emerald-300 rounded-md shrink-0">
+              <Phone className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">
+                Official Helpline 2
+              </span>
+              <a
+                href="tel:+918617232379"
+                className="font-bold text-white hover:text-amber-300 transition block tracking-wide"
+                title="Call +91 8617232379"
+              >
+                +91 8617232379
+              </a>
+            </div>
+          </div>
+
+          {/* Official Mobile 3 */}
+          <div className="bg-white/10 dark:bg-black/20 backdrop-blur-xs p-3 rounded-lg border border-white/10 flex items-center gap-2.5">
+            <div className="p-2 bg-emerald-500/20 text-emerald-300 rounded-md shrink-0">
+              <Phone className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300 block">
+                Official Helpline 3
+              </span>
+              <a
+                href="tel:+917980284720"
+                className="font-bold text-white hover:text-amber-300 transition block tracking-wide"
+                title="Call +91 7980284720"
+              >
+                +91 7980284720
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Admin Metric Cards */}

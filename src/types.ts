@@ -86,6 +86,8 @@ export interface MemberCounts {
   voluntary_commissioners: number;
   support_staff: number;
   professionals_staff: number;
+  voluntary_commissioners_gw?: number;
+  support_staff_gw?: number;
   // Totals
   youth_total: number;
   unit_leaders_total: number;

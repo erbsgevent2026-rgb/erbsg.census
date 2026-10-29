@@ -171,27 +171,39 @@ export function exportMembersToExcel(
     },
 
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
-      "BSG WING / SUB-CLASSIFICATION": "Professional Guides",
-      "REGISTERED COUNT": members.professional_guides || 0,
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Professional Scouters (SW)",
+      "REGISTERED COUNT": members.professionals_staff || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
-      "BSG WING / SUB-CLASSIFICATION": "Voluntary Commissioners",
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Voluntary Commissioners of SW",
       "REGISTERED COUNT": members.voluntary_commissioners || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
-      "BSG WING / SUB-CLASSIFICATION": "Support Staff",
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Support Staff (SW)",
       "REGISTERED COUNT": members.support_staff || 0,
       "STATUS": "ACTIVE"
     },
     {
-      "CENSUS CATEGORY": "3. PROFESSIONALS/STAFF",
-      "BSG WING / SUB-CLASSIFICATION": "Professionals / Staff",
-      "REGISTERED COUNT": members.professionals_staff || 0,
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Professional Scouters (GW)",
+      "REGISTERED COUNT": members.professional_guides || 0,
+      "STATUS": "ACTIVE"
+    },
+    {
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Voluntary Commissioners of GW",
+      "REGISTERED COUNT": members.voluntary_commissioners_gw || 0,
+      "STATUS": "ACTIVE"
+    },
+    {
+      "CENSUS CATEGORY": "4. PROFESSIONALS/STAFF",
+      "BSG WING / SUB-CLASSIFICATION": "Support Staff (GW)",
+      "REGISTERED COUNT": members.support_staff_gw || 0,
       "STATUS": "ACTIVE"
     },
     {
