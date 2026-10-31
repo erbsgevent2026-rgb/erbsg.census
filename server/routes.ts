@@ -1681,7 +1681,7 @@ apiRouter.put("/unit-details", authenticateToken, (req: Request, res: Response) 
 apiRouter.get("/census-confirmation", authenticateToken, (req: Request, res: Response) => {
   const user = req.user!;
   const targetDistrictId = user.role === "STATE_ADMIN" ? String(req.query.district_id || "dist_asn") : user.district_id!;
-  const yearId = String(req.query.year_id || "year_2026_2027");
+  const yearId = String(req.query.year_id || getCurrentSessionYear().id);
 
   if (!enforceDistrictAccess(req, res, targetDistrictId)) return;
 

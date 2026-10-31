@@ -97,7 +97,12 @@ export const SessionManagementView: React.FC<SessionManagementViewProps> = ({ on
         text: res.message || `Session Year ${newSessionLabel} created and initialized for all 9 districts.`
       });
 
-      await refreshYears();
+      if (setAsCurrent && (res as any)?.year?.id) {
+        setSelectedYear((res as any).year.id);
+        await refreshYears(true);
+      } else {
+        await refreshYears(false);
+      }
       await fetchSessions();
     } catch (err: any) {
       setStatusMessage({
@@ -120,7 +125,8 @@ export const SessionManagementView: React.FC<SessionManagementViewProps> = ({ on
         text: res.message || `Session Year ${label} is now set as the active official session.`
       });
 
-      await refreshYears();
+      setSelectedYear(yearId);
+      await refreshYears(true);
       await fetchSessions();
     } catch (err: any) {
       setStatusMessage({

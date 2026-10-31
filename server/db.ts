@@ -507,7 +507,8 @@ export async function getDb(): Promise<SqlJsDatabase> {
 
   // Ensure Session 2025-2026 and 2026-2027 exist for all 9 districts, preserving all historical data
   ensureSessionYear(2025, 2026, false, "ACTIVE");
-  ensureSessionYear(2026, 2027, true, "ACTIVE");
+  ensureSessionYear(2026, 2027, false, "ACTIVE");
+  ensureActiveSessionDesignated();
 
   // Ensure State Admin user exists only if absent or unhashed; NEVER reset password on every restart!
   try {
@@ -623,12 +624,63 @@ export function getCurrentFinancialYear(now = new Date()): { startYear: number; 
 }
 
 /**
+ * Ensures an active session year is properly designated and aligned between
+ * system_settings and academic_years tables without overriding an explicit Admin choice.
+ */
+export function ensureActiveSessionDesignated(): void {
+  if (!dbInstance) return;
+  try {
+    // 1. Check system_settings for explicit admin configured active session
+    const setting = queryOne<any>("SELECT value FROM system_settings WHERE key = 'active_session_year'");
+    if (setting?.value) {
+      const yr = queryOne<any>("SELECT id FROM academic_years WHERE id = ?", [setting.value]);
+      if (yr) {
+        dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [yr.id]);
+        dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [yr.id]);
+        return;
+      }
+    }
+
+    // 2. If no setting in system_settings, check if any row in academic_years is marked current
+    const current = queryOne<any>("SELECT id FROM academic_years WHERE is_current = 1");
+    if (current) {
+      dbInstance.run(
+        "INSERT OR REPLACE INTO system_settings (key, value, message, updated_at, updated_by) VALUES ('active_session_year', ?, 'Official Active Session Year', CURRENT_TIMESTAMP, 'SYSTEM')",
+        [current.id]
+      );
+      return;
+    }
+
+    // 3. Fallback: default to year_2026_2027 or latest year
+    const fallback =
+      queryOne<any>("SELECT id FROM academic_years WHERE id = 'year_2026_2027'") ||
+      queryOne<any>("SELECT id FROM academic_years ORDER BY label DESC LIMIT 1");
+    if (fallback) {
+      dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [fallback.id]);
+      dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [fallback.id]);
+      dbInstance.run(
+        "INSERT OR REPLACE INTO system_settings (key, value, message, updated_at, updated_by) VALUES ('active_session_year', ?, 'Official Active Session Year', CURRENT_TIMESTAMP, 'SYSTEM')",
+        [fallback.id]
+      );
+    }
+  } catch (err) {
+    console.warn("Could not ensure active session designated:", err);
+  }
+}
+
+/**
  * Returns the currently active/selected official session year from the database.
- * Dynamically updates whenever State Admin sets a new active session or a new FY is created.
+ * Dynamically updates whenever State Admin sets a new active session and stays permanently persistent.
  */
 export function getCurrentSessionYear(): { id: string; label: string } {
   if (!dbInstance) return { id: "year_2026_2027", label: "2026-2027" };
   try {
+    // 1. Check system_settings for explicit persistent active session
+    const setting = queryOne<any>("SELECT value FROM system_settings WHERE key = 'active_session_year'");
+    if (setting?.value) {
+      const yr = queryOne<any>("SELECT id, label FROM academic_years WHERE id = ?", [setting.value]);
+      if (yr) return { id: yr.id, label: yr.label };
+    }
     const current = queryOne<any>("SELECT id, label FROM academic_years WHERE is_current = 1");
     if (current) return { id: current.id, label: current.label };
     const anyYear = queryOne<any>("SELECT id, label FROM academic_years ORDER BY label DESC LIMIT 1");
@@ -667,13 +719,21 @@ export function ensureSessionYear(
   let created = false;
 
   if (!existing) {
+    // Check if an active session is already designated in system_settings
+    const activeSetting = queryOne<any>("SELECT value FROM system_settings WHERE key = 'active_session_year'");
+    const shouldMarkCurrent = isCurrent && !activeSetting?.value;
+
     dbInstance.run(
       "INSERT INTO academic_years (id, label, is_current, status) VALUES (?, ?, ?, ?)",
-      [id, label, isCurrent ? 1 : 0, status]
+      [id, label, shouldMarkCurrent ? 1 : 0, status]
     );
 
-    if (isCurrent) {
+    if (shouldMarkCurrent) {
       dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [id]);
+      dbInstance.run(
+        "INSERT OR REPLACE INTO system_settings (key, value, message, updated_at, updated_by) VALUES ('active_session_year', ?, 'Official Active Session Year', CURRENT_TIMESTAMP, 'SYSTEM')",
+        [id]
+      );
     }
 
     // Create official deadline for this session
@@ -722,21 +782,24 @@ export function ensureSessionYear(
 
     created = true;
     saveDatabase();
-    return { id, label, created: true, is_current: isCurrent };
+    return { id, label, created: true, is_current: Boolean(shouldMarkCurrent) };
   }
 
-  // If already exists, preserve data! Check if current needs marking only if requested
+  // If already exists, preserve data! Never automatically overwrite is_current on startup or routine checks!
   if (isCurrent && !existing.is_current) {
-    dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [existing.id]);
-    dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [existing.id]);
-    saveDatabase();
+    const activeSetting = queryOne<any>("SELECT value FROM system_settings WHERE key = 'active_session_year'");
+    if (!activeSetting?.value) {
+      dbInstance.run("UPDATE academic_years SET is_current = 0 WHERE id != ?", [existing.id]);
+      dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [existing.id]);
+      saveDatabase();
+    }
   }
 
   return {
     id: existing.id,
     label: existing.label,
     created: false,
-    is_current: isCurrent ? true : Boolean(existing.is_current)
+    is_current: Boolean(existing.is_current)
   };
 }
 
@@ -750,10 +813,10 @@ export function ensureCurrentFinancialYear(targetDate = new Date()): { id: strin
     return { id: res.id, label: res.label, created: res.created };
   }
 
-  // Ensure at least one session is marked as current
+  // Ensure at least one session is marked as current without overriding explicit admin configuration
   const anyCurrent = queryOne<any>("SELECT id FROM academic_years WHERE is_current = 1");
   if (!anyCurrent) {
-    dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [fy.id]);
+    ensureActiveSessionDesignated();
     saveDatabase();
   }
 
@@ -767,6 +830,21 @@ export function setCurrentSessionYear(yearId: string): { success: boolean; label
 
   dbInstance.run("UPDATE academic_years SET is_current = 0");
   dbInstance.run("UPDATE academic_years SET is_current = 1 WHERE id = ?", [yearId]);
+
+  // Permanently persist active session in system_settings
+  const existingSetting = queryOne<any>("SELECT key FROM system_settings WHERE key = 'active_session_year'");
+  if (existingSetting) {
+    dbInstance.run(
+      "UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP, updated_by = 'STATE_ADMIN' WHERE key = 'active_session_year'",
+      [yearId]
+    );
+  } else {
+    dbInstance.run(
+      "INSERT INTO system_settings (key, value, message, updated_at, updated_by) VALUES ('active_session_year', ?, 'Official Active Session Year configured by State Administrator', CURRENT_TIMESTAMP, 'STATE_ADMIN')",
+      [yearId]
+    );
+  }
+
   saveDatabase();
 
   return { success: true, label: yr.label, id: yr.id };

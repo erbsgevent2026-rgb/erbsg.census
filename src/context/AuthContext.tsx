@@ -25,7 +25,7 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: () => Promise<void>;
   refreshDistricts: () => Promise<void>;
-  refreshYears: () => Promise<void>;
+  refreshYears: (forceActiveYear?: boolean) => Promise<void>;
   syncEventTimestamp: number;
   maintenanceMode: boolean;
   maintenanceMessage: string;
@@ -51,7 +51,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [loading, setLoading] = useState<boolean>(true);
-  const [selectedYear, setSelectedYear] = useState<string>("year_2026_2027");
+  const [selectedYear, setSelectedYear] = useState<string>(() => {
+    return localStorage.getItem("erbsg_active_session_year") || "";
+  });
   const [availableYears, setAvailableYears] = useState<AcademicYear[]>([
     { id: "year_2026_2027", label: "2026-2027", is_current: 1, status: "ACTIVE" },
   ]);
@@ -149,19 +151,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  const refreshYears = useCallback(async () => {
+  const refreshYears = useCallback(async (forceActiveYear = false) => {
     try {
       const list = await api.getYears();
       if (Array.isArray(list) && list.length > 0) {
         setAvailableYears(list);
+        const activeYear = list.find((y) => y.is_current === 1) || list[0];
+        if (activeYear) {
+          localStorage.setItem("erbsg_active_session_year", activeYear.id);
+        }
         setSelectedYear((prev) => {
-          // If the previously selected year still exists in the available list, preserve it!
-          if (prev && list.some((y) => y.id === prev)) {
-            return prev;
+          // If forced, or nothing was selected, or previously selected year is not in available list,
+          // align immediately with the configured active official session
+          if (forceActiveYear || !prev || !list.some((y) => y.id === prev)) {
+            return activeYear.id;
           }
-          // Otherwise default to the current active session or first session
-          const curr = list.find((y) => y.is_current === 1);
-          return curr ? curr.id : list[0].id;
+          // Otherwise preserve the user's active browsing session
+          return prev;
         });
       }
     } catch {
@@ -171,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     refreshUser();
-    refreshYears();
+    refreshYears(true);
     refreshMaintenanceMode();
 
     const interval = setInterval(() => {
@@ -202,8 +208,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setMaintenanceMessage(parsed.payload.message);
             }
           }
-          if (parsed.type === "SESSION_YEAR_CREATED" || parsed.type === "ACTIVE_SESSION_CHANGED") {
-            refreshYears();
+          if (parsed.type === "ACTIVE_SESSION_CHANGED") {
+            refreshYears(true);
+          } else if (parsed.type === "SESSION_YEAR_CREATED") {
+            refreshYears(false);
           }
           if (parsed.type !== "CONNECTED") {
             setSyncEventTimestamp(Date.now());
@@ -266,6 +274,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res.user.role === "DISTRICT_USER" && res.user.districtId) {
         setActiveDistrictId(res.user.districtId);
       }
+      // Force-sync active session year on login so user always starts on the configured active session
+      await refreshYears(true);
       // Audit log the successful login into Firestore
       logDatabaseOperation({
         userId: res.user.id,
@@ -303,6 +313,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearStoredToken();
     setToken(null);
     setUser(null);
+    setSelectedYear("");
+    try {
+      localStorage.removeItem("erbsg_active_session_year");
+    } catch (_) {}
   };
 
   return (
