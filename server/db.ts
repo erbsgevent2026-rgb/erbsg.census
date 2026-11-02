@@ -1515,7 +1515,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
           "Liluah District",
           "ER-LLH",
           "BSG918582829",
-          "liluah@erbsg.org",
+          "bsgrellih@gmail.com",
           "+91 98300 11009",
           "Divisional Carriage & Wagon Workshop, Liluah, Howrah - 711204",
           1952,
@@ -1539,7 +1539,7 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
         [
           "usr_dist_llh",
           "BSG918582829",
-          "liluah@erbsg.org",
+          "bsgrellih@gmail.com",
           "Liluah District User",
           "+91 98300 11009",
           defaultDistrictPasswordHash,
@@ -1557,11 +1557,33 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
   // --- Migration: District name correction "Asansole District" -> "Asansol District" ---
   try {
-    db.run("UPDATE districts SET name = 'Asansol District', email = 'asansol@erbsg.org' WHERE id = 'dist_asn' OR name LIKE '%Asansole%'");
-    db.run("UPDATE users SET name = 'Asansol District User', email = 'asansol@erbsg.org' WHERE district_id = 'dist_asn' AND (name LIKE '%Asansole%' OR name = 'Asansole District User' OR name = 'Asansole User')");
+    db.run("UPDATE districts SET name = 'Asansol District', email = 'ertbsgasn@gmail.com' WHERE id = 'dist_asn' OR name LIKE '%Asansole%'");
+    db.run("UPDATE users SET name = 'Asansol District User', email = 'ertbsgasn@gmail.com' WHERE district_id = 'dist_asn' AND (name LIKE '%Asansole%' OR name = 'Asansole District User' OR name = 'Asansole User')");
     db.run("UPDATE audit_logs SET district_name = 'Asansol District' WHERE district_id = 'dist_asn' OR district_name LIKE '%Asansole%'");
   } catch (err) {
     console.error("Error updating Asansol district name:", err);
+  }
+
+  // --- Migration: Official District Email Addresses (9 Districts) ---
+  const districtOfficialEmails: Record<string, string> = {
+    dist_asn: "ertbsgasn@gmail.com",
+    dist_kpa: "kanchraparadistrict@yahoo.in",
+    dist_cen: "ertbsgcent@gmail.com",
+    dist_sdah: "erbsg.sealdah@gmail.com",
+    dist_clw: "ertbsgclw@gmail.com",
+    dist_hwh: "ertbsghw@gmail.com",
+    dist_mldt: "maldadistrict@yahoo.in",
+    dist_llh: "bsgrellih@gmail.com",
+    dist_jmp: "bsgjmpdistt20@gmail.com"
+  };
+
+  try {
+    for (const [distId, email] of Object.entries(districtOfficialEmails)) {
+      db.run("UPDATE districts SET email = ? WHERE id = ?", [email, distId]);
+      db.run("UPDATE users SET email = ? WHERE district_id = ? AND role = 'DISTRICT_USER'", [email, distId]);
+    }
+  } catch (err) {
+    console.error("Error migrating official district email addresses:", err);
   }
 
   // --- Migration: Official BSG IDs for District Users and Districts ---
@@ -1805,15 +1827,15 @@ function initSchemaAndSeed(db: SqlJsDatabase) {
 
     // Initial 9 districts sorted in proper alphabetical order:
     const initialDistricts = [
-      { id: "dist_asn", name: "Asansol District", code: "ER-ASN", bsgId: "BSG287206516", email: "asansol@erbsg.org", phone: "+91 98300 11004", address: "DRM Office, Rail Nagar, Asansol - 713301" },
-      { id: "dist_cen", name: "Central District", code: "ER-CEN", bsgId: "BSG414635725", email: "central@erbsg.org", phone: "+91 98300 11001", address: "Central Division HQ, Sealdah Station Complex, Kolkata - 700014" },
-      { id: "dist_clw", name: "CLW District", code: "ER-CLW", bsgId: "BSG497632275", email: "clw@erbsg.org", phone: "+91 98300 11005", address: "Chittaranjan Locomotive Works Campus, Chittaranjan - 713331" },
-      { id: "dist_hwh", name: "Howrah District", code: "ER-HWH", bsgId: "BSG778778724", email: "howrah@erbsg.org", phone: "+91 98300 11003", address: "DRM Building, Howrah Railway Station Yard, Howrah - 711101" },
-      { id: "dist_jmp", name: "Jamalpur District", code: "ER-JMP", bsgId: "BSG283090263", email: "jamalpur@erbsg.org", phone: "+91 98300 11008", address: "Jamalpur Locomotive Workshop Area, Jamalpur, Munger, Bihar - 811214" },
-      { id: "dist_kpa", name: "Kanchrapara District", code: "ER-KPA", bsgId: "BSG337400383", email: "kanchrapara@erbsg.org", phone: "+91 98300 11007", address: "Railway Workshop Grounds, Kanchrapara - 743145" },
-      { id: "dist_llh", name: "Liluah District", code: "ER-LLH", bsgId: "BSG918582829", email: "liluah@erbsg.org", phone: "+91 98300 11009", address: "Divisional Carriage & Wagon Workshop, Liluah, Howrah - 711204" },
-      { id: "dist_mldt", name: "Malda District", code: "ER-MLDT", bsgId: "BSG896907989", email: "malda@erbsg.org", phone: "+91 98300 11006", address: "Divisional Railway Manager Office, Jhaljhalia, Malda - 732102" },
-      { id: "dist_sdah", name: "Sealdah District", code: "ER-SDAH", bsgId: "BSG454137323", email: "sealdah@erbsg.org", phone: "+91 98300 11002", address: "DRM Office Building, Kaiser Street, Sealdah, Kolkata - 700014" },
+      { id: "dist_asn", name: "Asansol District", code: "ER-ASN", bsgId: "BSG287206516", email: "ertbsgasn@gmail.com", phone: "+91 98300 11004", address: "DRM Office, Rail Nagar, Asansol - 713301" },
+      { id: "dist_cen", name: "Central District", code: "ER-CEN", bsgId: "BSG414635725", email: "ertbsgcent@gmail.com", phone: "+91 98300 11001", address: "Central Division HQ, Sealdah Station Complex, Kolkata - 700014" },
+      { id: "dist_clw", name: "CLW District", code: "ER-CLW", bsgId: "BSG497632275", email: "ertbsgclw@gmail.com", phone: "+91 98300 11005", address: "Chittaranjan Locomotive Works Campus, Chittaranjan - 713331" },
+      { id: "dist_hwh", name: "Howrah District", code: "ER-HWH", bsgId: "BSG778778724", email: "ertbsghw@gmail.com", phone: "+91 98300 11003", address: "DRM Building, Howrah Railway Station Yard, Howrah - 711101" },
+      { id: "dist_jmp", name: "Jamalpur District", code: "ER-JMP", bsgId: "BSG283090263", email: "bsgjmpdistt20@gmail.com", phone: "+91 98300 11008", address: "Jamalpur Locomotive Workshop Area, Jamalpur, Munger, Bihar - 811214" },
+      { id: "dist_kpa", name: "Kanchrapara District", code: "ER-KPA", bsgId: "BSG337400383", email: "kanchraparadistrict@yahoo.in", phone: "+91 98300 11007", address: "Railway Workshop Grounds, Kanchrapara - 743145" },
+      { id: "dist_llh", name: "Liluah District", code: "ER-LLH", bsgId: "BSG918582829", email: "bsgrellih@gmail.com", phone: "+91 98300 11009", address: "Divisional Carriage & Wagon Workshop, Liluah, Howrah - 711204" },
+      { id: "dist_mldt", name: "Malda District", code: "ER-MLDT", bsgId: "BSG896907989", email: "maldadistrict@yahoo.in", phone: "+91 98300 11006", address: "Divisional Railway Manager Office, Jhaljhalia, Malda - 732102" },
+      { id: "dist_sdah", name: "Sealdah District", code: "ER-SDAH", bsgId: "BSG454137323", email: "erbsg.sealdah@gmail.com", phone: "+91 98300 11002", address: "DRM Office Building, Kaiser Street, Sealdah, Kolkata - 700014" },
     ];
 
     for (const d of initialDistricts) {

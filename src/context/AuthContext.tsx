@@ -34,15 +34,15 @@ interface AuthContextType {
 }
 
 const CANONICAL_DISTRICTS: District[] = [
-  { id: "dist_asn", state_id: "state_er", code: "ER-ASN", name: "Asansol District", bsg_id: "BSG287206516", email: "asansol@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_cen", state_id: "state_er", code: "ER-CEN", name: "Central District", bsg_id: "BSG757134370", email: "central@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_clw", state_id: "state_er", code: "ER-CLW", name: "CLW District", bsg_id: "BSG630263604", email: "clw@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_hwh", state_id: "state_er", code: "ER-HWH", name: "Howrah District", bsg_id: "BSG364024329", email: "howrah@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_jmp", state_id: "state_er", code: "ER-JMP", name: "Jamalpur District", bsg_id: "BSG904481358", email: "jamalpur@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_kpa", state_id: "state_er", code: "ER-KPA", name: "Kanchrapara District", bsg_id: "BSG268612959", email: "kanchrapara@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_llh", state_id: "state_er", code: "ER-LLH", name: "Liluah District", bsg_id: "BSG496357778", email: "liluah@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_mldt", state_id: "state_er", code: "ER-MLDT", name: "Malda District", bsg_id: "BSG210344510", email: "malda@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
-  { id: "dist_sdah", state_id: "state_er", code: "ER-SDAH", name: "Sealdah District", bsg_id: "BSG406456041", email: "sealdah@erbsg.org", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_asn", state_id: "state_er", code: "ER-ASN", name: "Asansol District", bsg_id: "BSG287206516", email: "ertbsgasn@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_cen", state_id: "state_er", code: "ER-CEN", name: "Central District", bsg_id: "BSG757134370", email: "ertbsgcent@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_clw", state_id: "state_er", code: "ER-CLW", name: "CLW District", bsg_id: "BSG630263604", email: "ertbsgclw@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_hwh", state_id: "state_er", code: "ER-HWH", name: "Howrah District", bsg_id: "BSG364024329", email: "ertbsghw@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_jmp", state_id: "state_er", code: "ER-JMP", name: "Jamalpur District", bsg_id: "BSG904481358", email: "bsgjmpdistt20@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_kpa", state_id: "state_er", code: "ER-KPA", name: "Kanchrapara District", bsg_id: "BSG268612959", email: "kanchraparadistrict@yahoo.in", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_llh", state_id: "state_er", code: "ER-LLH", name: "Liluah District", bsg_id: "BSG496357778", email: "bsgrellih@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_mldt", state_id: "state_er", code: "ER-MLDT", name: "Malda District", bsg_id: "BSG210344510", email: "maldadistrict@yahoo.in", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
+  { id: "dist_sdah", state_id: "state_er", code: "ER-SDAH", name: "Sealdah District", bsg_id: "BSG406456041", email: "erbsg.sealdah@gmail.com", phone: "", address: "", status: "ACTIVE", logo_url: null, created_at: "2026-04-01T00:00:00Z" },
 ];
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

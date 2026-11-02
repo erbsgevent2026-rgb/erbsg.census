@@ -192,15 +192,15 @@ On first login, the user is required to set their own new password (`must_change
 
 | District Name | BSG Login ID | Email | Initial Password | Role |
 | :--- | :--- | :--- | :--- | :--- |
-| **Asansol District** | `BSG287206516` | `asansol@erbsg.org` | `Test@1234` | District User |
-| **Central District** | `BSG414635725` | `central@erbsg.org` | `Test@1234` | District User |
-| **CLW District** | `BSG497632275` | `clw@erbsg.org` | `Test@1234` | District User |
-| **Howrah District** | `BSG778778724` | `howrah@erbsg.org` | `Test@1234` | District User |
-| **Jamalpur District** | `BSG283090263` | `jamalpur@erbsg.org` | `Test@1234` | District User |
-| **Kanchrapara District** | `BSG337400383` | `kanchrapara@erbsg.org` | `Test@1234` | District User |
-| **Liluah District** | `BSG918582829` | `liluah@erbsg.org` | `Test@1234` | District User |
-| **Malda District** | `BSG896907989` | `malda@erbsg.org` | `Test@1234` | District User |
-| **Sealdah District** | `BSG454137323` | `sealdah@erbsg.org` | `Test@1234` | District User |
+| **Asansol District** | `BSG287206516` | `ertbsgasn@gmail.com` | `Test@1234` | District User |
+| **Central District** | `BSG414635725` | `ertbsgcent@gmail.com` | `Test@1234` | District User |
+| **CLW District** | `BSG497632275` | `ertbsgclw@gmail.com` | `Test@1234` | District User |
+| **Howrah District** | `BSG778778724` | `ertbsghw@gmail.com` | `Test@1234` | District User |
+| **Jamalpur District** | `BSG283090263` | `bsgjmpdistt20@gmail.com` | `Test@1234` | District User |
+| **Kanchrapara District** | `BSG337400383` | `kanchraparadistrict@yahoo.in` | `Test@1234` | District User |
+| **Liluah District** | `BSG918582829` | `bsgrellih@gmail.com` | `Test@1234` | District User |
+| **Malda District** | `BSG896907989` | `maldadistrict@yahoo.in` | `Test@1234` | District User |
+| **Sealdah District** | `BSG454137323` | `erbsg.sealdah@gmail.com` | `Test@1234` | District User |
 
 ---
 
